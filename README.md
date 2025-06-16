@@ -139,6 +139,11 @@ List all files in the repository or a specific directory.
 - **Endpoints**: 
   - `/mcp` - Main MCP protocol endpoint
   - `/health` - Health check endpoint
+- **MCP Methods Supported**:
+  - `initialize` - Protocol handshake and capability negotiation
+  - `notifications/initialized` - Client readiness notification
+  - `tools/list` - List available tools
+  - `tools/call` - Execute tools (file_read, file_search, list_files)
 - **Security**: Path traversal protection ensures access stays within repository bounds
 - **Performance**: Intelligent directory filtering to avoid large build directories
 - **Error Handling**: Comprehensive error handling with descriptive messages

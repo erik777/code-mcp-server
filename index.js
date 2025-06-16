@@ -271,6 +271,12 @@ app.post('/mcp', async(req, res) => {
                     ],
                 },
             };
+        } else if (method === "notifications/initialized") {
+            console.log("🎉 === INITIALIZED NOTIFICATION ===");
+            console.log("Client has completed initialization and is ready for normal operations");
+            // Notifications don't expect a JSON-RPC response, just HTTP 200
+            res.status(200).send();
+            return;
         } else if (method === "tools/call") {
             console.log("⚡ === TOOLS/CALL METHOD ===");
             const { name, arguments: args } = params;
