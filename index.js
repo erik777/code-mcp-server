@@ -1,14 +1,14 @@
 // Minimal MCP-style Git Gateway
 // Stack: Node.js + Express + simple-git
 
-const express = require('express');
-const simpleGit = require('simple-git');
-const fs = require('fs');
-const path = require('path');
+const express = require("express");
+const simpleGit = require("simple-git");
+const fs = require("fs");
+const path = require("path");
 
 const app = express();
 const port = process.env.PORT || 3131;
-const REPO_PATH = process.env.REPO_PATH || path.resolve(__dirname, 'repo');
+const REPO_PATH = process.env.REPO_PATH || path.resolve(__dirname, "repo");
 const git = simpleGit(REPO_PATH);
 
 app.use(express.json());
@@ -26,51 +26,54 @@ app.use((req, res, next) => {
 
 // Ensure repo exists
 if (!fs.existsSync(REPO_PATH)) {
-    console.error(`ERROR: Missing repo at ${REPO_PATH}. Please mount your Git repo.`);
+    console.error(
+        `ERROR: Missing repo at ${REPO_PATH}. Please mount your Git repo.`
+    );
     process.exit(1);
 }
 
 // List all files
-app.get('/files', (req, res) => {
-    console.log('[GET /files]');
+app.get("/files", (req, res) => {
+    console.log("[GET /files]");
     const walk = (dir) =>
-        fs.readdirSync(dir).flatMap(file => {
+        fs.readdirSync(dir).flatMap((file) => {
             const fullPath = path.join(dir, file);
             return fs.statSync(fullPath).isDirectory() ?
                 walk(fullPath) :
-                fullPath.replace(REPO_PATH + path.sep, '');
+                fullPath.replace(REPO_PATH + path.sep, "");
         });
     res.json(walk(REPO_PATH));
 });
 
 // Get file content
-app.get('/file/*', (req, res) => {
-    console.log('[GET /file/*]');
+app.get("/file/*", (req, res) => {
+    console.log("[GET /file/*]");
     const filePath = path.join(REPO_PATH, req.params[0]);
-    if (!filePath.startsWith(REPO_PATH)) return res.status(400).send('Invalid path');
-    fs.readFile(filePath, 'utf8', (err, content) => {
-        if (err) return res.status(404).send('File not found');
+    if (!filePath.startsWith(REPO_PATH))
+        return res.status(400).send("Invalid path");
+    fs.readFile(filePath, "utf8", (err, content) => {
+        if (err) return res.status(404).send("File not found");
         res.send(content);
     });
 });
 
 // Keyword search
-app.post('/search', (req, res) => {
-    console.log('[POST /search]');
+app.post("/search", (req, res) => {
+    console.log("[POST /search]");
     const { query } = req.body;
-    if (!query) return res.status(400).send('Missing query');
+    if (!query) return res.status(400).send("Missing query");
     const results = [];
 
     const walk = (dir) =>
-        fs.readdirSync(dir, { withFileTypes: true }).flatMap(dirent => {
+        fs.readdirSync(dir, { withFileTypes: true }).flatMap((dirent) => {
             const fullPath = path.join(dir, dirent.name);
             return dirent.isDirectory() ? walk(fullPath) : fullPath;
         });
 
     for (const file of walk(REPO_PATH)) {
-        const content = fs.readFileSync(file, 'utf8');
-        const relPath = file.replace(REPO_PATH + path.sep, '');
-        const lines = content.split('\n');
+        const content = fs.readFileSync(file, "utf8");
+        const relPath = file.replace(REPO_PATH + path.sep, "");
+        const lines = content.split("\n");
         lines.forEach((line, i) => {
             if (line.toLowerCase().includes(query.toLowerCase())) {
                 results.push({ file: relPath, line: i + 1, content: line });
@@ -81,121 +84,182 @@ app.post('/search', (req, res) => {
 });
 
 // Serve OpenAPI spec
-app.get('/openapi', (req, res) => {
-    console.log('[GET /openapi]');
-    res.type('application/yaml').sendFile(path.join(__dirname, 'openapi.yaml'));
+app.get("/openapi", (req, res) => {
+    console.log("[GET /openapi]");
+    res.type("application/yaml").sendFile(path.join(__dirname, "openapi.yaml"));
 });
 
 // Serve index.html
-app.get('/', (req, res) => {
-    console.log('[GET /]');
+app.get("/", (req, res) => {
+    console.log("[GET /]");
     // res.sendFile(path.join(__dirname, 'index.html'));
-    res.send('MCP server is running.');
+    res.send("MCP server is running.");
 });
 
-app.get('/status', (req, res) => {
-    console.log('[GET /status]');
+app.get("/status", (req, res) => {
+    console.log("[GET /status]");
     res.json({
-        status: 'ok',
-        version: '1.0.0'
+        status: "ok",
+        version: "1.0.0",
     });
 });
 
-app.get('/corsair/mcp1/status', (req, res) => {
-    console.log('[GET /corsair/mcp1/status]');
+app.get("/corsair/mcp1/status", (req, res) => {
+    console.log("[GET /corsair/mcp1/status]");
     res.json({
-        status: 'ok',
-        version: '1.0.0'
+        status: "ok",
+        version: "1.0.0",
     });
 });
 
-app.post('/', (req, res) => {
+app.post("/", (req, res) => {
     const { jsonrpc, method, params, id } = req.body;
 
-    console.log('[POST /] Headers:', req.headers);
-    console.log('[POST /] Body:', JSON.stringify(req.body, null, 2));
-    console.log('[POST /] method:', method);
+    console.log("[POST /] Headers:", req.headers);
+    console.log("[POST /] Body:", JSON.stringify(req.body, null, 2));
+    console.log("[POST /] method:", method);
 
-    if (jsonrpc !== '2.0') {
-        console.log('[POST /] INVALID jsonrpc:', jsonrpc);
+    if (jsonrpc !== "2.0") {
+        console.log("[POST /] INVALID jsonrpc:", jsonrpc);
         return res.status(400).json({
-            jsonrpc: '2.0',
-            error: { code: -32600, message: 'Invalid Request' },
+            jsonrpc: "2.0",
+            error: { code: -32600, message: "Invalid Request" },
             id: null,
         });
     }
 
-    if (method === 'initialize') {
+    if (method === "initialize") {
         // Respond with server capabilities
         // protocolVersion: '2025-03-26' (must match the version of client request)
-        return res.type('application/json').json({
-            jsonrpc: '2.0',
+        return res.type("application/json").json({
+            jsonrpc: "2.0",
             id,
             result: {
-                protocolVersion: '2025-03-26',
+                protocolVersion: "2025-03-26",
                 serverInfo: {
-                    name: 'Code MCP Gateway',
-                    version: '1.0.0',
+                    name: "Code MCP Gateway",
+                    version: "1.0.0",
                 },
                 capabilities: {
                     tools: {
-                        listChanged: true
+                        listChanged: true,
                     },
                     resources: {
                         subscribe: true,
-                        listChanged: true
+                        listChanged: true,
                     },
-                    prompts: {}
-                }
-
+                    prompts: {},
+                },
             },
         });
     }
 
-    if (method === 'files/list') {
+    if (method === "files/list") {
         return res.json({
-            jsonrpc: '2.0',
+            jsonrpc: "2.0",
             id,
             result: [
-                { path: 'README.md', size: 100, sha256: 'fakehash1' },
-                { path: 'index.js', size: 250, sha256: 'fakehash2' }
+                { path: "README.md", size: 100, sha256: "fakehash1" },
+                { path: "index.js", size: 250, sha256: "fakehash2" },
             ],
         });
     }
 
-
-    if (method === 'tools/list') {
-        console.log('[POST /] tools/list');
+    if (method === "tools/list") {
+        console.log("[POST /] tools/list");
         return res.json({
-            jsonrpc: '2.0',
+            jsonrpc: "2.0",
             id,
-            result: [{
-                name: 'example_tool',
-                description: 'An example tool',
-                parameters: {
-                    type: 'object',
-                    properties: {
-                        input: {
-                            type: 'string',
-                            description: 'Input for the tool',
+            result: {
+                tools: [{
+                        name: "file/read",
+                        description: "Read a file from the Git repository",
+                        input_schema: {
+                            type: "object",
+                            properties: {
+                                path: {
+                                    type: "string",
+                                    description: "Relative path to the file to read",
+                                },
+                            },
+                            required: ["path"],
+                        },
+                        output_schema: {
+                            type: "object",
+                            properties: {
+                                path: {
+                                    type: "string",
+                                    description: "The full path to the file",
+                                },
+                                content: {
+                                    type: "string",
+                                    description: "The contents of the file",
+                                },
+                                mime_type: {
+                                    type: ["string", "null"],
+                                    description: "The MIME type of the file, if known",
+                                },
+                            },
+                            required: ["path", "content"],
                         },
                     },
-                    required: ['input'],
-                },
-            }, ],
+                    {
+                        name: "file/search",
+                        description: "Search for a keyword in files",
+                        input_schema: {
+                            type: "object",
+                            properties: {
+                                query: {
+                                    type: "string",
+                                    description: "Search term or keyword",
+                                },
+                            },
+                            required: ["query"],
+                        },
+
+                        output_schema: {
+                            type: "object",
+                            properties: {
+                                results: {
+                                    type: "array",
+                                    description: "List of matched file results",
+                                    items: {
+                                        type: "object",
+                                        properties: {
+                                            path: {
+                                                type: "string",
+                                                description: "Path to the file where the match occurred",
+                                            },
+                                            snippet: {
+                                                type: "string",
+                                                description: "Text snippet showing the match",
+                                            },
+                                            line: {
+                                                type: "integer",
+                                                description: "Line number where the match occurred",
+                                            },
+                                        },
+                                        required: ["path", "snippet"],
+                                    },
+                                },
+                            },
+                            required: ["results"],
+                        },
+                    },
+                ],
+            },
         });
     }
 
-    console.log('[POST /] Method not found:', method);
+    console.log("[POST /] Method not found:", method);
 
     // Handle other methods or return method not found
     return res.status(404).json({
-        jsonrpc: '2.0',
-        error: { code: -32601, message: 'Method not found' },
+        jsonrpc: "2.0",
+        error: { code: -32601, message: "Method not found" },
         id,
     });
 });
-
 
 // app.post('/', (req, res) => {
 //     console.log('[POST /] Headers:', req.headers);
