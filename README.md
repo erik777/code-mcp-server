@@ -4,9 +4,9 @@ A Model Context Protocol (MCP) server that exposes Git repository contents to La
 
 ## Features
 
-- **File Reading**: Read any file from the repository
-- **File Search**: Search for text within files with optional file pattern filtering
-- **File Listing**: List all files in the repository or specific directories
+- **Search**: Search for text content within files with optional file pattern filtering
+- **Fetch**: Fetch and return the contents of specific files from the repository
+- **OpenAI Compatible**: Uses standardized `search` and `fetch` tool names for ChatGPT deep research compatibility
 - **Security**: Path traversal protection to keep access within the repository
 - **Performance**: Skips common build directories (node_modules, .git, target, build, dist)
 
@@ -104,30 +104,26 @@ The server will output:
 
 ### 3. Available Tools
 
+#### OpenAI ChatGPT Compatibility
+
+This MCP server uses standardized tool names (`search` and `fetch`) that are specifically recognized by OpenAI's ChatGPT deep research feature. These tool names are required for proper integration with ChatGPT's MCP connector.
+
 Once connected, ChatGPT will have access to these tools:
 
-#### `file_read`
-Read the contents of any file in the repository.
-```json
-{
-  "path": "relative/path/to/file.js"
-}
-```
-
-#### `file_search`
-Search for text within files, with optional file pattern filtering.
+#### `search`
+Search for text content within files in the repository, with optional file pattern filtering.
 ```json
 {
   "query": "function name",
-  "file_pattern": "*.js"  // optional
+  "file_pattern": "*.js"  // optional - e.g., "*.js", "*.vue", "*.md"
 }
 ```
 
-#### `list_files`
-List all files in the repository or a specific directory.
+#### `fetch`
+Fetch and return the contents of a specific file from the repository.
 ```json
 {
-  "directory": "src"  // optional, defaults to repository root
+  "path": "relative/path/to/file.js"
 }
 ```
 
@@ -143,7 +139,7 @@ List all files in the repository or a specific directory.
   - `initialize` - Protocol handshake and capability negotiation
   - `notifications/initialized` - Client readiness notification
   - `tools/list` - List available tools
-  - `tools/call` - Execute tools (file_read, file_search, list_files)
+  - `tools/call` - Execute tools (search, fetch)
 - **Security**: Path traversal protection ensures access stays within repository bounds
 - **Performance**: Intelligent directory filtering to avoid large build directories
 - **Error Handling**: Comprehensive error handling with descriptive messages

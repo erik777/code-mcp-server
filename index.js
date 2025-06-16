@@ -224,48 +224,35 @@ app.post('/mcp', async(req, res) => {
                 id,
                 result: {
                     tools: [{
-                            name: "file_read",
-                            description: "Read the contents of a file from the Git repository",
-                            inputSchema: {
-                                type: "object",
-                                properties: {
-                                    path: {
-                                        type: "string",
-                                        description: "Relative path to the file to read",
-                                    },
-                                },
-                                required: ["path"],
-                            },
-                        },
-                        {
-                            name: "file_search",
-                            description: "Search for text within files in the repository",
+                            name: "search",
+                            description: "Search for text content within files in the repository",
                             inputSchema: {
                                 type: "object",
                                 properties: {
                                     query: {
                                         type: "string",
-                                        description: "Text to search for",
+                                        description: "Text to search for within files",
                                     },
                                     file_pattern: {
                                         type: "string",
-                                        description: "Optional file pattern to limit search",
+                                        description: "Optional file pattern to limit search (e.g., '*.js', '*.vue', '*.md')",
                                     },
                                 },
                                 required: ["query"],
                             },
                         },
                         {
-                            name: "list_files",
-                            description: "List all files in the repository",
+                            name: "fetch",
+                            description: "Fetch and return the contents of a specific file from the repository",
                             inputSchema: {
                                 type: "object",
                                 properties: {
-                                    directory: {
+                                    path: {
                                         type: "string",
-                                        description: "Optional directory to list",
+                                        description: "Relative path to the file to fetch",
                                     },
                                 },
+                                required: ["path"],
                             },
                         },
                     ],
@@ -283,22 +270,15 @@ app.post('/mcp', async(req, res) => {
             console.log(`🎯 Tool: ${name}`);
             console.log(`📦 Arguments:`, JSON.stringify(args, null, 2));
 
-            if (name === "file_read") {
+            if (name === "fetch") {
                 const result = await handleFileRead(args);
                 response = {
                     jsonrpc: "2.0",
                     id,
                     result
                 };
-            } else if (name === "file_search") {
+            } else if (name === "search") {
                 const result = await handleFileSearch(args);
-                response = {
-                    jsonrpc: "2.0",
-                    id,
-                    result
-                };
-            } else if (name === "list_files") {
-                const result = await handleListFiles(args);
                 response = {
                     jsonrpc: "2.0",
                     id,
