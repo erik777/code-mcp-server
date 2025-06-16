@@ -1,126 +1,196 @@
-// Minimal MCP-style Git Gateway
-// Stack: Node.js + Express + simple-git
+// MCP Git Gateway using official @modelcontextprotocol/sdk
+// Stack: Node.js + Express + MCP SDK + simple-git
 
-const express = require("express");
-const simpleGit = require("simple-git");
-const fs = require("fs");
-const path = require("path");
+const express = require('express');
 
-const app = express();
-const port = process.env.PORT || 3131;
-const REPO_PATH = process.env.REPO_PATH || path.resolve(__dirname, "repo");
+// Load environment files in priority order: .env.local > .env > defaults
+require('dotenv').config({ path: '.env.local' });
+require('dotenv').config({ path: '.env' });
+
+const fs = require('fs');
+const path = require('path');
+const simpleGit = require('simple-git');
+
+// Configuration
+const PORT = process.env.PORT || 3131;
+const REPO_PATH = process.env.REPO_PATH || path.resolve(__dirname, 'repo');
 const git = simpleGit(REPO_PATH);
 
-app.use(express.json());
-
-// app.use((req, res, next) => {
-//     console.log(`[UNHANDLED] ${req.method} ${req.originalUrl}`);
-//     next();
-// });
-
-// logging
-app.use((req, res, next) => {
-    console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
-    next();
-});
+console.log('🚀 Starting MCP Git Gateway Server');
+console.log(`📂 Repository path: ${REPO_PATH}`);
+console.log(`🌐 Port: ${PORT}`);
 
 // Ensure repo exists
 if (!fs.existsSync(REPO_PATH)) {
-    console.error(
-        `ERROR: Missing repo at ${REPO_PATH}. Please mount your Git repo.`
-    );
+    console.error(`❌ ERROR: Missing repo at ${REPO_PATH}. Please set REPO_PATH environment variable.`);
     process.exit(1);
 }
 
-// List all files
-app.get("/files", (req, res) => {
-    console.log("[GET /files]");
-    const walk = (dir) =>
-        fs.readdirSync(dir).flatMap((file) => {
-            const fullPath = path.join(dir, file);
-            return fs.statSync(fullPath).isDirectory() ?
-                walk(fullPath) :
-                fullPath.replace(REPO_PATH + path.sep, "");
-        });
-    res.json(walk(REPO_PATH));
-});
-
-// Get file content
-app.get("/file/*", (req, res) => {
-    console.log("[GET /file/*]");
-    const filePath = path.join(REPO_PATH, req.params[0]);
-    if (!filePath.startsWith(REPO_PATH))
-        return res.status(400).send("Invalid path");
-    fs.readFile(filePath, "utf8", (err, content) => {
-        if (err) return res.status(404).send("File not found");
-        res.send(content);
-    });
-});
-
-// Keyword search
-app.post("/search", (req, res) => {
-    console.log("[POST /search]");
-    const { query } = req.body;
-    if (!query) return res.status(400).send("Missing query");
+// Helper function to walk directory and find files
+function walkDirectory(dir) {
     const results = [];
 
-    const walk = (dir) =>
-        fs.readdirSync(dir, { withFileTypes: true }).flatMap((dirent) => {
-            const fullPath = path.join(dir, dirent.name);
-            return dirent.isDirectory() ? walk(fullPath) : fullPath;
-        });
+    function walk(currentDir) {
+        try {
+            const entries = fs.readdirSync(currentDir, { withFileTypes: true });
 
-    for (const file of walk(REPO_PATH)) {
-        const content = fs.readFileSync(file, "utf8");
-        const relPath = file.replace(REPO_PATH + path.sep, "");
-        const lines = content.split("\n");
-        lines.forEach((line, i) => {
-            if (line.toLowerCase().includes(query.toLowerCase())) {
-                results.push({ file: relPath, line: i + 1, content: line });
+            for (const entry of entries) {
+                const fullPath = path.join(currentDir, entry.name);
+                const relativePath = path.relative(REPO_PATH, fullPath);
+
+                if (entry.isDirectory()) {
+                    // Skip common build/cache directories
+                    if (!['node_modules', '.git', 'target', 'build', 'dist'].includes(entry.name)) {
+                        walk(fullPath);
+                    }
+                } else {
+                    results.push(relativePath);
+                }
             }
-        });
+        } catch (error) {
+            console.warn(`⚠️  Could not read directory ${currentDir}: ${error.message}`);
+        }
     }
-    res.json(results);
+
+    walk(dir);
+    return results;
+}
+
+
+
+// Tool implementations
+async function handleFileRead(args) {
+    const { path: filePath } = args;
+
+    if (!filePath) {
+        throw new Error('File path is required');
+    }
+
+    const fullPath = path.join(REPO_PATH, filePath);
+
+    // Security check
+    if (!fullPath.startsWith(REPO_PATH)) {
+        throw new Error('Invalid file path - outside repository');
+    }
+
+    if (!fs.existsSync(fullPath)) {
+        throw new Error('File not found');
+    }
+
+    const stats = fs.statSync(fullPath);
+    if (!stats.isFile()) {
+        throw new Error('Path is not a file');
+    }
+
+    const content = fs.readFileSync(fullPath, 'utf8');
+    console.log(`📖 Read file: ${filePath} (${content.length} characters)`);
+
+    return {
+        content: [{
+            type: 'text',
+            text: content
+        }]
+    };
+}
+
+async function handleFileSearch(args) {
+    const { query, file_pattern } = args;
+
+    if (!query) {
+        throw new Error('Search query is required');
+    }
+
+    const results = [];
+    const files = walkDirectory(REPO_PATH);
+
+    for (const file of files) {
+        // Apply file pattern filter if provided
+        if (file_pattern && !file.match(new RegExp(file_pattern.replace('*', '.*')))) {
+            continue;
+        }
+
+        try {
+            const fullPath = path.join(REPO_PATH, file);
+            const content = fs.readFileSync(fullPath, 'utf8');
+            const lines = content.split('\n');
+
+            lines.forEach((line, index) => {
+                if (line.toLowerCase().includes(query.toLowerCase())) {
+                    results.push({
+                        file,
+                        line: index + 1,
+                        content: line.trim()
+                    });
+                }
+            });
+        } catch (error) {
+            // Skip files that can't be read (binary, permissions, etc.)
+            continue;
+        }
+    }
+
+    console.log(`🔍 Search for "${query}" found ${results.length} matches`);
+
+    return {
+        content: [{
+            type: 'text',
+            text: JSON.stringify(results, null, 2)
+        }]
+    };
+}
+
+async function handleListFiles(args) {
+    const { directory = '' } = args;
+
+    const targetDir = path.join(REPO_PATH, directory);
+
+    // Security check
+    if (!targetDir.startsWith(REPO_PATH)) {
+        throw new Error('Invalid directory path - outside repository');
+    }
+
+    if (!fs.existsSync(targetDir)) {
+        throw new Error('Directory not found');
+    }
+
+    const files = walkDirectory(targetDir);
+    console.log(`📁 Listed ${files.length} files in ${directory || 'repository root'}`);
+
+    return {
+        content: [{
+            type: 'text',
+            text: JSON.stringify(files, null, 2)
+        }]
+    };
+}
+
+// Create Express app
+const app = express();
+app.use(express.json());
+
+// Add CORS headers for OpenAI connector
+app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+
+    if (req.method === 'OPTIONS') {
+        res.sendStatus(200);
+    } else {
+        next();
+    }
 });
 
-// Serve OpenAPI spec
-app.get("/openapi", (req, res) => {
-    console.log("[GET /openapi]");
-    res.type("application/yaml").sendFile(path.join(__dirname, "openapi.yaml"));
-});
-
-// Serve index.html
-app.get("/", (req, res) => {
-    console.log("[GET /]");
-    // res.sendFile(path.join(__dirname, 'index.html'));
-    res.send("MCP server is running.");
-});
-
-app.get("/status", (req, res) => {
-    console.log("[GET /status]");
-    res.json({
-        status: "ok",
-        version: "1.0.0",
-    });
-});
-
-app.get("/corsair/mcp1/status", (req, res) => {
-    console.log("[GET /corsair/mcp1/status]");
-    res.json({
-        status: "ok",
-        version: "1.0.0",
-    });
-});
-
-app.post("/", (req, res) => {
+// Handle POST requests for client-to-server communication
+app.post('/mcp', async(req, res) => {
     const { jsonrpc, method, params, id } = req.body;
 
-    console.log("[POST /] Headers:", req.headers);
-    console.log("[POST /] Body:", JSON.stringify(req.body, null, 2));
-    console.log("[POST /] method:", method);
+    console.log('📥 === INCOMING MCP REQUEST ===');
+    console.log(`Method: ${method}`);
+    console.log(`Body:`, JSON.stringify(req.body, null, 2));
 
     if (jsonrpc !== "2.0") {
-        console.log("[POST /] INVALID jsonrpc:", jsonrpc);
+        console.log("❌ INVALID JSON-RPC VERSION:", jsonrpc);
         return res.status(400).json({
             jsonrpc: "2.0",
             error: { code: -32600, message: "Invalid Request" },
@@ -128,146 +198,188 @@ app.post("/", (req, res) => {
         });
     }
 
-    if (method === "initialize") {
-        // Respond with server capabilities
-        // protocolVersion: '2025-03-26' (must match the version of client request)
-        return res.type("application/json").json({
-            jsonrpc: "2.0",
-            id,
-            result: {
-                protocolVersion: "2025-03-26",
-                serverInfo: {
-                    name: "Code MCP Gateway",
-                    version: "1.0.0",
+    try {
+        let response;
+
+        if (method === "initialize") {
+            console.log("🚀 === INITIALIZE METHOD ===");
+            response = {
+                jsonrpc: "2.0",
+                id,
+                result: {
+                    protocolVersion: "2025-03-26",
+                    serverInfo: {
+                        name: "code-mcp-server",
+                        version: "1.0.0",
+                    },
+                    capabilities: {
+                        tools: {},
+                    },
                 },
-                capabilities: {
-                    tools: {
-                        listChanged: true,
-                    },
-                    resources: {
-                        subscribe: true,
-                        listChanged: true,
-                    },
-                    prompts: {},
-                },
-            },
-        });
-    }
-
-    if (method === "files/list") {
-        return res.json({
-            jsonrpc: "2.0",
-            id,
-            result: [
-                { path: "README.md", size: 100, sha256: "fakehash1" },
-                { path: "index.js", size: 250, sha256: "fakehash2" },
-            ],
-        });
-    }
-
-    if (method === "tools/list") {
-        console.log("[POST /] tools/list");
-        return res.json({
-            jsonrpc: "2.0",
-            id,
-            result: {
-                tools: [{
-                        name: "file/read",
-                        description: "Read a file from the Git repository",
-                        input_schema: {
-                            type: "object",
-                            properties: {
-                                path: {
-                                    type: "string",
-                                    description: "Relative path to the file to read",
+            };
+        } else if (method === "tools/list") {
+            console.log("🔧 === TOOLS/LIST METHOD ===");
+            response = {
+                jsonrpc: "2.0",
+                id,
+                result: {
+                    tools: [{
+                            name: "file_read",
+                            description: "Read the contents of a file from the Git repository",
+                            inputSchema: {
+                                type: "object",
+                                properties: {
+                                    path: {
+                                        type: "string",
+                                        description: "Relative path to the file to read",
+                                    },
                                 },
+                                required: ["path"],
                             },
-                            required: ["path"],
                         },
-                        output_schema: {
-                            type: "object",
-                            properties: {
-                                path: {
-                                    type: "string",
-                                    description: "The full path to the file",
+                        {
+                            name: "file_search",
+                            description: "Search for text within files in the repository",
+                            inputSchema: {
+                                type: "object",
+                                properties: {
+                                    query: {
+                                        type: "string",
+                                        description: "Text to search for",
+                                    },
+                                    file_pattern: {
+                                        type: "string",
+                                        description: "Optional file pattern to limit search",
+                                    },
                                 },
-                                content: {
-                                    type: "string",
-                                    description: "The contents of the file",
-                                },
-                                mime_type: {
-                                    type: ["string", "null"],
-                                    description: "The MIME type of the file, if known",
-                                },
+                                required: ["query"],
                             },
-                            required: ["path", "content"],
                         },
-                    },
-                    {
-                        name: "file/search",
-                        description: "Search for a keyword in files",
-                        input_schema: {
-                            type: "object",
-                            properties: {
-                                query: {
-                                    type: "string",
-                                    description: "Search term or keyword",
-                                },
-                            },
-                            required: ["query"],
-                        },
-
-                        output_schema: {
-                            type: "object",
-                            properties: {
-                                results: {
-                                    type: "array",
-                                    description: "List of matched file results",
-                                    items: {
-                                        type: "object",
-                                        properties: {
-                                            path: {
-                                                type: "string",
-                                                description: "Path to the file where the match occurred",
-                                            },
-                                            snippet: {
-                                                type: "string",
-                                                description: "Text snippet showing the match",
-                                            },
-                                            line: {
-                                                type: "integer",
-                                                description: "Line number where the match occurred",
-                                            },
-                                        },
-                                        required: ["path", "snippet"],
+                        {
+                            name: "list_files",
+                            description: "List all files in the repository",
+                            inputSchema: {
+                                type: "object",
+                                properties: {
+                                    directory: {
+                                        type: "string",
+                                        description: "Optional directory to list",
                                     },
                                 },
                             },
-                            required: ["results"],
                         },
-                    },
-                ],
+                    ],
+                },
+            };
+        } else if (method === "tools/call") {
+            console.log("⚡ === TOOLS/CALL METHOD ===");
+            const { name, arguments: args } = params;
+            console.log(`🎯 Tool: ${name}`);
+            console.log(`📦 Arguments:`, JSON.stringify(args, null, 2));
+
+            if (name === "file_read") {
+                const result = await handleFileRead(args);
+                response = {
+                    jsonrpc: "2.0",
+                    id,
+                    result
+                };
+            } else if (name === "file_search") {
+                const result = await handleFileSearch(args);
+                response = {
+                    jsonrpc: "2.0",
+                    id,
+                    result
+                };
+            } else if (name === "list_files") {
+                const result = await handleListFiles(args);
+                response = {
+                    jsonrpc: "2.0",
+                    id,
+                    result
+                };
+            } else {
+                response = {
+                    jsonrpc: "2.0",
+                    id,
+                    error: {
+                        code: -32601,
+                        message: `Tool not found: ${name}`
+                    }
+                };
+            }
+        } else {
+            console.log("❓ === UNKNOWN METHOD ===");
+            console.log(`🚨 UNHANDLED METHOD: "${method}"`);
+            response = {
+                jsonrpc: "2.0",
+                id,
+                error: {
+                    code: -32601,
+                    message: "Method not found"
+                }
+            };
+        }
+
+        console.log('📤 === OUTGOING MCP RESPONSE ===');
+        console.log(`Response:`, JSON.stringify(response, null, 2));
+
+        res.json(response);
+    } catch (error) {
+        console.error('❌ Error handling MCP request:', error);
+        res.status(500).json({
+            jsonrpc: '2.0',
+            error: {
+                code: -32603,
+                message: 'Internal server error',
+                data: error.message
             },
+            id: req.body ? req.body.id : null
         });
     }
+});
 
-    console.log("[POST /] Method not found:", method);
-
-    // Handle other methods or return method not found
-    return res.status(404).json({
-        jsonrpc: "2.0",
-        error: { code: -32601, message: "Method not found" },
-        id,
+// Handle GET requests (optional SSE endpoint)
+app.get('/mcp', (req, res) => {
+    console.log('📡 GET request to /mcp - Server-to-client communication not implemented');
+    res.status(405).json({
+        jsonrpc: '2.0',
+        error: {
+            code: -32000,
+            message: 'Method not allowed. Use POST for client-to-server communication.'
+        },
+        id: null
     });
 });
 
-// app.post('/', (req, res) => {
-//     console.log('[POST /] Headers:', req.headers);
-//     console.log('[POST /] Body:', JSON.stringify(req.body, null, 2));
-//     res.status(200).send('OK');
-// });
+// Health check endpoint
+app.get('/health', (req, res) => {
+    res.json({
+        status: 'ok',
+        server: 'MCP Git Gateway',
+        version: '1.0.0',
+        repo: REPO_PATH
+    });
+});
 
-// start server
-app.listen(port, () => {
-    console.log(`MCP Git Gateway v1.0.0 running at http://localhost:${port}`);
+// Start the server
+async function main() {
+    app.listen(PORT, '0.0.0.0', () => {
+        console.log('🎉 MCP Git Gateway Server started successfully');
+        console.log(`📡 Server is listening on http://localhost:${PORT}`);
+        console.log(`🔗 MCP endpoint: http://localhost:${PORT}/mcp`);
+        console.log(`💊 Health check: http://localhost:${PORT}/health`);
+    });
+}
+
+// Handle graceful shutdown
+process.on('SIGINT', async() => {
+    console.log('\n🛑 Shutting down MCP server...');
+    process.exit(0);
+});
+
+// Start the server
+main().catch((error) => {
+    console.error('💥 Failed to start server:', error);
+    process.exit(1);
 });
