@@ -127,20 +127,27 @@ app.post('/', (req, res) => {
 
     if (method === 'initialize') {
         // Respond with server capabilities
+        // protocolVersion: '2025-03-26' (must match the version of client request)
         return res.type('application/json').json({
             jsonrpc: '2.0',
             id,
             result: {
+                protocolVersion: '2025-03-26',
                 serverInfo: {
                     name: 'Code MCP Gateway',
                     version: '1.0.0',
                 },
                 capabilities: {
-                    // Define your server's capabilities here
-                    tools: true,
-                    files: true,
-                    search: true,
-                },
+                    tools: {
+                        listChanged: true
+                    },
+                    resources: {
+                        subscribe: true,
+                        listChanged: true
+                    },
+                    prompts: {}
+                }
+
             },
         });
     }
@@ -158,6 +165,7 @@ app.post('/', (req, res) => {
 
 
     if (method === 'tools/list') {
+        console.log('[POST /] tools/list');
         return res.json({
             jsonrpc: '2.0',
             id,
