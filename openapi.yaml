@@ -1,0 +1,65 @@
+openapi: 3.0.0
+info:
+  title: Code MCP Gateway
+  version: 1.0.0
+  description: Minimal API for exposing a local Git repo for use by ChatGPT or LLM agents.
+
+paths:
+  /files:
+    get:
+      summary: List all files
+      responses:
+        '200':
+          description: Array of file paths
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+
+  /file/{path}:
+    get:
+      summary: Get file content by path
+      parameters:
+        - name: path
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: File contents
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /search:
+    post:
+      summary: Search for keyword in files
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                query:
+                  type: string
+      responses:
+        '200':
+          description: Array of matches
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    file:
+                      type: string
+                    line:
+                      type: integer
+                    content:
+                      type: string

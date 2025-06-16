@@ -66,6 +66,16 @@ app.post('/search', (req, res) => {
     res.json(results);
 });
 
+// Serve OpenAPI spec
+app.get('/openapi', (req, res) => {
+    res.sendFile(path.join(__dirname, 'openapi.yaml'));
+});
+
+// Serve index.html
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'index.html'));
+});
+
 app.listen(port, () => {
     console.log(`MCP Git Gateway running at http://localhost:${port}`);
 });
