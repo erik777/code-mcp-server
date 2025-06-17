@@ -4,8 +4,8 @@ A Model Context Protocol (MCP) server that exposes Git repository contents to La
 
 ## Features
 
-- **Search**: Search for text content within files with optional file pattern filtering
-- **Fetch**: Fetch and return the contents of specific files from the repository
+- **Search**: Search for resources and return structured results with text snippets
+- **Fetch**: Retrieve detailed structured content for specific resources (files) with metadata
 - **OpenAI Compatible**: Uses standardized `search` and `fetch` tool names for ChatGPT deep research compatibility
 - **Security**: Path traversal protection to keep access within the repository
 - **Performance**: Skips common build directories (node_modules, .git, target, build, dist)
@@ -35,7 +35,7 @@ The server loads environment variables in the following priority order:
    ```bash
    # .env.local (not committed to git)
    PORT=3131
-   REPO_PATH=/home/erik/dev/ws/cursor/oc-sc
+   REPO_PATH=repo
    ```
 
 This pattern allows you to:
@@ -53,7 +53,7 @@ To run the server against your local oc-sc repository:
 npm run dev
 ```
 
-This will start the MCP server with `REPO_PATH=/home/erik/dev/ws/cursor/oc-sc`.
+This will start the MCP server with `REPO_PATH=repo`.
 
 ### Testing
 
@@ -86,7 +86,7 @@ npm run dev
 The server will output:
 ```
 🚀 Starting MCP Git Gateway Server
-📂 Repository path: /home/erik/dev/ws/cursor/oc-sc
+📂 Repository path: /home/user/dev/myrepo
 🌐 Port: 3131
 🎉 MCP Git Gateway Server started successfully
 📡 Server is listening on http://localhost:3131
@@ -111,21 +111,34 @@ This MCP server uses standardized tool names (`search` and `fetch`) that are spe
 Once connected, ChatGPT will have access to these tools:
 
 #### `search`
-Search for text content within files in the repository, with optional file pattern filtering.
+Searches for resources using the provided query string and returns matching results.
 ```json
 {
-  "query": "function name",
-  "file_pattern": "*.js"  // optional - e.g., "*.js", "*.vue", "*.md"
+  "query": "function name"
 }
 ```
 
+Returns a structured object with:
+- `results`: Array of matching resources
+  - `id`: Resource ID (file path)
+  - `title`: Generated title from filename
+  - `text`: Text snippet showing matching lines
+  - `url`: null (for local files)
+
 #### `fetch`
-Fetch and return the contents of a specific file from the repository.
+Retrieves detailed content for a specific resource identified by the given ID (file path).
 ```json
 {
-  "path": "relative/path/to/file.js"
+  "id": "relative/path/to/file.js"
 }
 ```
+
+Returns a structured object with:
+- `id`: The resource ID (file path)
+- `title`: Generated title from filename
+- `text`: Complete file content
+- `url`: null (for local files)
+- `metadata`: File information (size, modification date, extension)
 
 ## Technical Details
 

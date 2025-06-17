@@ -60,41 +60,63 @@ function walkDirectory(dir) {
 
 // Tool implementations
 async function handleFileRead(args) {
-    const { path: filePath } = args;
+    const { id } = args;
 
-    if (!filePath) {
-        throw new Error('File path is required');
+    if (!id) {
+        throw new Error('Resource ID is required');
     }
 
+    // Treat the ID as a file path for our repository use case
+    const filePath = id;
     const fullPath = path.join(REPO_PATH, filePath);
 
     // Security check
     if (!fullPath.startsWith(REPO_PATH)) {
-        throw new Error('Invalid file path - outside repository');
+        throw new Error('Invalid resource ID - outside repository');
     }
 
     if (!fs.existsSync(fullPath)) {
-        throw new Error('File not found');
+        throw new Error('Resource not found');
     }
 
     const stats = fs.statSync(fullPath);
     if (!stats.isFile()) {
-        throw new Error('Path is not a file');
+        throw new Error('Resource is not a file');
     }
 
     const content = fs.readFileSync(fullPath, 'utf8');
-    console.log(`📖 Read file: ${filePath} (${content.length} characters)`);
+    console.log(`📖 Fetched resource: ${filePath} (${content.length} characters)`);
+
+    // Generate title from file name and extension
+    const fileName = path.basename(filePath);
+    const fileExt = path.extname(filePath);
+    const title = `${fileName}${fileExt ? ` (${fileExt.substring(1).toUpperCase()} file)` : ''}`;
+
+    // Get file stats for metadata
+    const lastModified = stats.mtime.toISOString();
+    const fileSize = stats.size;
 
     return {
         content: [{
             type: 'text',
-            text: content
+            text: JSON.stringify({
+                id: id,
+                title: title,
+                text: content,
+                url: null, // No URL for local files
+                metadata: {
+                    file_path: filePath,
+                    file_size: fileSize.toString(),
+                    last_modified: lastModified,
+                    file_extension: fileExt.substring(1) || 'no_extension'
+                }
+            }, null, 2)
         }]
     };
 }
 
 async function handleFileSearch(args) {
-    const { query, file_pattern } = args;
+    const { query } = args;
 
     if (!query) {
         throw new Error('Search query is required');
@@ -104,37 +126,55 @@ async function handleFileSearch(args) {
     const files = walkDirectory(REPO_PATH);
 
     for (const file of files) {
-        // Apply file pattern filter if provided
-        if (file_pattern && !file.match(new RegExp(file_pattern.replace('*', '.*')))) {
-            continue;
-        }
-
         try {
             const fullPath = path.join(REPO_PATH, file);
             const content = fs.readFileSync(fullPath, 'utf8');
             const lines = content.split('\n');
-
+            
+            // Find all matching lines in this file
+            const matchingLines = [];
             lines.forEach((line, index) => {
                 if (line.toLowerCase().includes(query.toLowerCase())) {
-                    results.push({
-                        file,
-                        line: index + 1,
+                    matchingLines.push({
+                        lineNumber: index + 1,
                         content: line.trim()
                     });
                 }
             });
+
+            // If we found matches in this file, create a result entry
+            if (matchingLines.length > 0) {
+                const fileName = path.basename(file);
+                const fileExt = path.extname(file);
+                const title = `${fileName}${fileExt ? ` (${fileExt.substring(1).toUpperCase()} file)` : ''}`;
+                
+                // Create text snippet from first few matches
+                const snippetLines = matchingLines.slice(0, 3); // Show up to 3 matching lines
+                const snippetText = snippetLines.map(match => 
+                    `Line ${match.lineNumber}: ${match.content}`
+                ).join('\n');
+                
+                results.push({
+                    id: file, // Use file path as ID
+                    title: title,
+                    text: snippetText,
+                    url: null // No URL for local files
+                });
+            }
         } catch (error) {
             // Skip files that can't be read (binary, permissions, etc.)
             continue;
         }
     }
 
-    console.log(`🔍 Search for "${query}" found ${results.length} matches`);
+    console.log(`🔍 Search for "${query}" found ${results.length} matching files`);
 
     return {
         content: [{
             type: 'text',
-            text: JSON.stringify(results, null, 2)
+            text: JSON.stringify({
+                results: results
+            }, null, 2)
         }]
     };
 }
@@ -225,34 +265,90 @@ app.post('/mcp', async(req, res) => {
                 result: {
                     tools: [{
                             name: "search",
-                            description: "Search for text content within files in the repository",
-                            inputSchema: {
+                            description: "Searches for resources using the provided query string and returns matching results.",
+                            input_schema: {
                                 type: "object",
                                 properties: {
                                     query: {
                                         type: "string",
-                                        description: "Text to search for within files",
-                                    },
-                                    file_pattern: {
-                                        type: "string",
-                                        description: "Optional file pattern to limit search (e.g., '*.js', '*.vue', '*.md')",
+                                        description: "Search query.",
                                     },
                                 },
                                 required: ["query"],
                             },
+                            output_schema: {
+                                type: "object",
+                                properties: {
+                                    results: {
+                                        type: "array",
+                                        items: {
+                                            type: "object",
+                                            properties: {
+                                                id: {
+                                                    type: "string",
+                                                    description: "ID of the resource.",
+                                                },
+                                                title: {
+                                                    type: "string",
+                                                    description: "Title or headline of the resource.",
+                                                },
+                                                text: {
+                                                    type: "string",
+                                                    description: "Text snippet or summary from the resource.",
+                                                },
+                                                url: {
+                                                    type: ["string", "null"],
+                                                    description: "URL of the resource. Optional but needed for citations to work.",
+                                                },
+                                            },
+                                            required: ["id", "title", "text"],
+                                        },
+                                    },
+                                },
+                                required: ["results"],
+                            },
                         },
                         {
                             name: "fetch",
-                            description: "Fetch and return the contents of a specific file from the repository",
-                            inputSchema: {
+                            description: "Retrieves detailed content for a specific resource identified by the given ID.",
+                            input_schema: {
                                 type: "object",
                                 properties: {
-                                    path: {
+                                    id: {
                                         type: "string",
-                                        description: "Relative path to the file to fetch",
+                                        description: "ID of the resource to fetch.",
                                     },
                                 },
-                                required: ["path"],
+                                required: ["id"],
+                            },
+                            output_schema: {
+                                type: "object",
+                                properties: {
+                                    id: {
+                                        type: "string",
+                                        description: "ID of the resource.",
+                                    },
+                                    title: {
+                                        type: "string",
+                                        description: "Title or headline of the fetched resource.",
+                                    },
+                                    text: {
+                                        type: "string",
+                                        description: "Complete textual content of the resource.",
+                                    },
+                                    url: {
+                                        type: ["string", "null"],
+                                        description: "URL of the resource. Optional but needed for citations to work.",
+                                    },
+                                    metadata: {
+                                        type: ["object", "null"],
+                                        additionalProperties: {
+                                            type: "string"
+                                        },
+                                        description: "Optional metadata providing additional context.",
+                                    },
+                                },
+                                required: ["id", "title", "text"],
                             },
                         },
                     ],
