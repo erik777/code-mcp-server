@@ -33,6 +33,12 @@ Your MCP server uses the official `@modelcontextprotocol/sdk` with configurable 
 - ✅ Smart BASE_URL vs provider URL handling
 - ✅ Production and development configuration support
 
+### 5. **Automatic Hydra Client Registration**
+- ✅ Auto-detects when client doesn't exist in Hydra
+- ✅ Automatically registers client with proper configuration
+- ✅ Graceful handling of initialization failures
+- ✅ Detailed logging for troubleshooting
+
 ## Configuration Options
 
 ### OAuth Provider Selection
@@ -111,7 +117,9 @@ HYDRA_BROWSER_URL=http://localhost:4444
 BASE_URL=https://your-domain.com/mcp
 ```
 
-**Register MCP Client with Hydra:**
+**Automatic Client Registration:**
+The MCP server automatically registers the client with Hydra on startup if it doesn't exist. You can also manually register if needed:
+
 ```bash
 curl -X POST http://localhost:4445/clients \
   -H "Content-Type: application/json" \
@@ -270,9 +278,8 @@ npm run test:basic
      serve all --dev
    ```
 
-2. Register MCP client (see Step 2A above)
-3. Start MCP server: `npm start`
-4. Test complete flow
+2. Start MCP server: `npm start` (client will be auto-registered)
+3. Test complete flow
 
 ## Production Deployment
 

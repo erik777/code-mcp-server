@@ -1039,7 +1039,7 @@ async function main() {
     });
 
     // Start the Express server
-    app.listen(PORT, "0.0.0.0", () => {
+    app.listen(PORT, "0.0.0.0", async () => {
         logWithTimestamp('SUCCESS', `🎉 MCP Git Gateway Server with OAuth started successfully (${OAUTH_PROVIDER})`);
         logWithTimestamp('INFO', `📡 Server is listening on http://localhost:${PORT}`);
         logWithTimestamp('INFO', `🔗 MCP endpoint: http://localhost:${PORT}/mcp`);
@@ -1052,6 +1052,17 @@ async function main() {
         logWithTimestamp('INFO', `🌐 Base URL: ${EFFECTIVE_BASE_URL} ${BASE_URL ? '(configured)' : '(fallback)'}`);
         logWithTimestamp('INFO', `📧 Allowed domain: ${ALLOWED_EMAIL_DOMAIN}`);
         logWithTimestamp('INFO', `🔧 OAuth Provider: ${OAUTH_PROVIDER}`);
+
+        // Initialize Hydra client if using Hydra provider
+        if (OAUTH_PROVIDER === 'hydra') {
+            try {
+                const { initHydra } = require('./hydra-init');
+                await initHydra();
+            } catch (error) {
+                logWithTimestamp('ERROR', 'Failed to initialize Hydra client:', error.message);
+                logWithTimestamp('WARN', 'Server will continue running, but OAuth may not work correctly');
+            }
+        }
     });
 
     // Handle graceful shutdown
