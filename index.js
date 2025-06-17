@@ -298,13 +298,13 @@ app.post("/mcp", async (req, res) => {
             {
               name: "search",
               description:
-                "Searches for resources using the provided query string and returns matching results.",
+                "Searches for content within files in a Git repository using text matching.\n\nThis tool searches through the actual content of files (not just filenames) and returns matches with context. It's designed for finding files that contain specific text, code patterns, or documentation.\n\nCommon usage patterns:\n- Search for function names, variable names, or code patterns\n- Find files containing specific documentation topics (e.g., 'installation', 'API', 'configuration')\n- Locate files with particular text content\n- Discover which files reference certain concepts or technologies\n\nTo find a specific file like 'README.md', search for unique content that would be in that file (e.g., headings like '# Title', '## Features', common README terms like 'installation' or 'getting started').\n\nAfter finding relevant files in search results, use the 'fetch' tool with the file path from the 'id' field to get the complete file content.",
               inputSchema: {
                 type: "object",
                 properties: {
                   query: {
                     type: "string",
-                    description: "Search query.",
+                    description: "Text to search for within file contents. Use specific terms that would appear in the target files (e.g., function names, documentation headings like '# Installation', technology names, or key concepts). For README files, try terms like 'features', 'installation', 'getting started', or specific project names.",
                   },
                 },
                 required: ["query"],
@@ -346,13 +346,13 @@ app.post("/mcp", async (req, res) => {
             {
               name: "fetch",
               description:
-                "Retrieves detailed content for a specific resource identified by the given ID.",
+                "Retrieves the complete content of a specific file from the Git repository using its file path as the ID.\n\nThis tool returns the full text content of a file along with metadata. Use this after finding files through search to get their complete content.\n\nThe 'id' parameter should be the file path relative to the repository root, exactly as returned in search results (e.g., 'README.md', 'src/index.js', 'package.json').\n\nExamples:\n- fetch('README.md') → gets the complete README file\n- fetch('package.json') → gets the package configuration\n- fetch('src/components/App.js') → gets a specific source file\n- fetch('docs/api.md') → gets documentation files\n\nThe response includes the file's complete text content plus metadata like file size, last modified date, and file extension.",
               inputSchema: {
                 type: "object",
                 properties: {
                   id: {
                     type: "string",
-                    description: "ID of the resource to fetch.",
+                    description: "File path relative to the repository root (e.g., 'README.md', 'src/index.js', 'package.json'). This should be the exact 'id' value returned from search results.",
                   },
                 },
                 required: ["id"],
