@@ -9,7 +9,7 @@ This document outlines how to integrate and test the standalone **code-mcp-serve
 ### 1. **code-mcp-server**
 
 * Port: `3131`
-* Accessible via: `https://www.servicecraze.com/corsair/mcp1`
+* Accessible via: `https://www.example.com/reverse/proxypath`
 * MCP endpoint: `/mcp`
 * OAuth callback: `/oauth/callback`
 * Hydra login handler: `/hydra/login`
@@ -22,12 +22,12 @@ Add these to `.env.local` or export them in your shell:
 
 ```env
 # Public base URL
-PUBLIC_URL=https://www.servicecraze.com/corsair/mcp1
+PUBLIC_URL=https://www.example.com/reverse/proxypath
 
 # OAuth settings for Hydra
 OAUTH_CLIENT_ID=mcp-client
 OAUTH_CLIENT_SECRET=mcp-secret
-OAUTH_REDIRECT_URI=https://www.servicecraze.com/corsair/mcp1/oauth/callback
+OAUTH_REDIRECT_URI=https://www.example.com/reverse/proxypath/oauth/callback
 
 # Hydra endpoints
 HYDRA_ADMIN_URL=http://localhost:4445
@@ -45,7 +45,7 @@ HYDRA_PUBLIC_URL=http://localhost:4444
 >     "grant_types": ["authorization_code"],
 >     "response_types": ["code"],
 >     "scope": "openid profile email",
->     "redirect_uris": ["https://www.servicecraze.com/corsair/mcp1/oauth/callback"],
+>     "redirect_uris": ["https://www.example.com/reverse/proxypath/oauth/callback"],
 >     "token_endpoint_auth_method": "client_secret_post"
 >   }'
 > ```
@@ -73,12 +73,12 @@ docker run --rm \
 
 > **Browser-accessed Public URLs:**
 >
-> * `https://www.servicecraze.com/corsair/mcp1/oauth/login` – OAuth login start (user-triggered)
-> * `https://www.servicecraze.com/corsair/mcp1/oauth/callback` – OAuth redirect after login
-> * `https://www.servicecraze.com/corsair/mcp1/hydra/login` – Hydra login handler (Hydra calls this)
-> * `https://www.servicecraze.com/corsair/mcp1/hydra/consent` – Hydra consent handler (Hydra calls this)
-> * `https://www.servicecraze.com/corsair/mcp1/mcp` – ChatGPT hits this after OAuth auth
-> * `https://www.servicecraze.com/corsair/mcp1/.well-known/oauth-authorization-server` – For metadata discovery
+> * `https://www.example.com/reverse/proxypath/oauth/login` – OAuth login start (user-triggered)
+> * `https://www.example.com/reverse/proxypath/oauth/callback` – OAuth redirect after login
+> * `https://www.example.com/reverse/proxypath/hydra/login` – Hydra login handler (Hydra calls this)
+> * `https://www.example.com/reverse/proxypath/hydra/consent` – Hydra consent handler (Hydra calls this)
+> * `https://www.example.com/reverse/proxypath/mcp` – ChatGPT hits this after OAuth auth
+> * `https://www.example.com/reverse/proxypath/.well-known/oauth-authorization-server` – For metadata discovery
 
 > **Internal Service URLs (reverse proxy targets):**
 >
@@ -99,9 +99,9 @@ You may modify the `URLS_SELF_ISSUER` and handler paths to reflect your reverse-
 
 Hydra must be configured to point to your MCP server:
 
-* Login endpoint: `https://www.servicecraze.com/corsair/mcp1/hydra/login`
-* Consent endpoint: `https://www.servicecraze.com/corsair/mcp1/hydra/consent`
-* Redirect URI for MCP client: `https://www.servicecraze.com/corsair/mcp1/oauth/callback`
+* Login endpoint: `https://www.example.com/reverse/proxypath/hydra/login`
+* Consent endpoint: `https://www.example.com/reverse/proxypath/hydra/consent`
+* Redirect URI for MCP client: `https://www.example.com/reverse/proxypath/oauth/callback`
 
 Ensure these match in:
 
@@ -132,7 +132,7 @@ Ensure these match in:
 
 ### 🔪 Test OAuth Metadata
 
-* Access: `https://www.servicecraze.com/corsair/mcp1/.well-known/oauth-authorization-server`
+* Access: `https://www.example.com/reverse/proxypath/.well-known/oauth-authorization-server`
 * Should return valid JSON:
 
 ```json
@@ -152,7 +152,7 @@ Ensure these match in:
 
 ### 🔪 Test Hydra Flow
 
-1. Open: `https://www.servicecraze.com/corsair/mcp1/oauth/login`
+1. Open: `https://www.example.com/reverse/proxypath/oauth/login`
 2. Proceed through login flow
 3. Complete consent
 4. Return to `/mcp`
