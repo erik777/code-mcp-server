@@ -136,19 +136,43 @@ async function handleFileSearch(args) {
     throw new Error("Search query is required");
   }
 
+  console.log(`🔍 Enhanced search for: "${query}"`);
+
   const results = [];
   const files = walkDirectory(REPO_PATH);
+  const queryLower = query.toLowerCase();
 
+  // Strategy 1: Exact filename matching (highest priority)
+  const exactFilenameMatches = files.filter(file => {
+    const fileName = path.basename(file).toLowerCase();
+    return fileName === queryLower || fileName === queryLower + '.md' || fileName === queryLower + '.json';
+  });
+
+  console.log(`📁 Found ${exactFilenameMatches.length} exact filename matches`);
+
+  // Strategy 2: Partial filename matching
+  const partialFilenameMatches = files.filter(file => {
+    const fileName = path.basename(file).toLowerCase();
+    return fileName.includes(queryLower) && !exactFilenameMatches.includes(file);
+  });
+
+  console.log(`📂 Found ${partialFilenameMatches.length} partial filename matches`);
+
+  // Strategy 3: Content search (existing functionality)
+  const contentMatches = [];
   for (const file of files) {
+    if (exactFilenameMatches.includes(file) || partialFilenameMatches.includes(file)) {
+      continue; // Skip files already matched by filename
+    }
+
     try {
       const fullPath = path.join(REPO_PATH, file);
       const content = fs.readFileSync(fullPath, "utf8");
       const lines = content.split("\n");
 
-      // Find all matching lines in this file
       const matchingLines = [];
       lines.forEach((line, index) => {
-        if (line.toLowerCase().includes(query.toLowerCase())) {
+        if (line.toLowerCase().includes(queryLower)) {
           matchingLines.push({
             lineNumber: index + 1,
             content: line.trim(),
@@ -156,36 +180,76 @@ async function handleFileSearch(args) {
         }
       });
 
-      // If we found matches in this file, create a result entry
       if (matchingLines.length > 0) {
-        const fileName = path.basename(file);
-        const fileExt = path.extname(file);
-        const title = `${fileName}${
-          fileExt ? ` (${fileExt.substring(1).toUpperCase()} file)` : ""
-        }`;
-
-        // Create text snippet from first few matches
-        const snippetLines = matchingLines.slice(0, 3); // Show up to 3 matching lines
-        const snippetText = snippetLines
-          .map((match) => `Line ${match.lineNumber}: ${match.content}`)
-          .join("\n");
-
-        results.push({
-          id: file, // Use file path as ID
-          title: title,
-          text: snippetText,
-          url: null, // No URL for local files
-        });
+        contentMatches.push({ file, matchingLines });
       }
     } catch (error) {
-      // Skip files that can't be read (binary, permissions, etc.)
       continue;
     }
   }
 
-  console.log(
-    `🔍 Search for "${query}" found ${results.length} matching files`
-  );
+  console.log(`📄 Found ${contentMatches.length} content matches`);
+
+  // Helper function to create result entry
+  function createResult(file, matchingLines, priority = 0) {
+    const fileName = path.basename(file);
+    const fileExt = path.extname(file);
+    const title = `${fileName}${fileExt ? ` (${fileExt.substring(1).toUpperCase()} file)` : ""}`;
+
+    let snippetText = "";
+    if (matchingLines && matchingLines.length > 0) {
+      const snippetLines = matchingLines.slice(0, 3);
+      snippetText = snippetLines
+        .map((match) => `Line ${match.lineNumber}: ${match.content}`)
+        .join("\n");
+    } else {
+      // For filename matches, show first few lines of file
+      try {
+        const fullPath = path.join(REPO_PATH, file);
+        const content = fs.readFileSync(fullPath, "utf8");
+        const lines = content.split("\n").slice(0, 3);
+        snippetText = lines.map((line, idx) => `Line ${idx + 1}: ${line.trim()}`).join("\n");
+      } catch (error) {
+        snippetText = `File: ${fileName}`;
+      }
+    }
+
+    return {
+      id: file,
+      title: title,
+      text: snippetText,
+      url: null,
+      _priority: priority // Internal field for sorting
+    };
+  }
+
+  // Process matches with priority scoring
+  // Priority 1: Exact filename matches (highest)
+  exactFilenameMatches.forEach(file => {
+    results.push(createResult(file, null, 100));
+  });
+
+  // Priority 2: Partial filename matches
+  partialFilenameMatches.forEach(file => {
+    results.push(createResult(file, null, 50));
+  });
+
+  // Priority 3: Content matches (existing behavior)
+  contentMatches.forEach(({ file, matchingLines }) => {
+    const priority = matchingLines.length; // More matches = higher priority
+    results.push(createResult(file, matchingLines, priority));
+  });
+
+  // Sort by priority (highest first)
+  results.sort((a, b) => b._priority - a._priority);
+
+  // Remove internal priority field
+  results.forEach(result => delete result._priority);
+
+  // Limit results to prevent overwhelming responses
+  const limitedResults = results.slice(0, 10);
+
+  console.log(`🎯 Returning ${limitedResults.length} prioritized results (${results.length} total found)`);
 
   return {
     content: [
@@ -193,7 +257,7 @@ async function handleFileSearch(args) {
         type: "text",
         text: JSON.stringify(
           {
-            results: results,
+            results: limitedResults,
           },
           null,
           2
@@ -298,13 +362,13 @@ app.post("/mcp", async (req, res) => {
             {
               name: "search",
               description:
-                "Searches for content within files in a Git repository using text matching.\n\nThis tool searches through the actual content of files (not just filenames) and returns matches with context. It's designed for finding files that contain specific text, code patterns, or documentation.\n\nCommon usage patterns:\n- Search for function names, variable names, or code patterns\n- Find files containing specific documentation topics (e.g., 'installation', 'API', 'configuration')\n- Locate files with particular text content\n- Discover which files reference certain concepts or technologies\n\nTo find a specific file like 'README.md', search for unique content that would be in that file (e.g., headings like '# Title', '## Features', common README terms like 'installation' or 'getting started').\n\nAfter finding relevant files in search results, use the 'fetch' tool with the file path from the 'id' field to get the complete file content.",
+                "STEP 1: Find files in this Git repository by searching through their text content.\n\nThis tool searches inside files (not filenames) and returns matches with file paths as 'id' values. Always use the 'fetch' tool next to get complete file content.\n\n🔄 WORKFLOW: search → fetch\n1. Use 'search' to find files containing your target content\n2. Use 'fetch' with the 'id' from search results to get full file content\n\n📋 EXAMPLES:\nTo get README.md:\n• search('# ') → finds files with markdown headers → fetch('README.md')\n• search('Getting Started') → finds README → fetch('README.md')\n• search('installation') → finds README → fetch('README.md')\n\nTo get package.json:\n• search('\"name\"') → finds package files → fetch('package.json')\n• search('dependencies') → finds package files → fetch('package.json')\n\nTo get main code files:\n• search('function') → finds JS/Python files → fetch('src/index.js')\n• search('class') → finds code files → fetch('lib/main.py')\n\n⚠️ IMPORTANT: The 'id' field in results is the file path - use it exactly in fetch()!\n\n🎯 BEST PRACTICES:\n• Search for content that would be IN the file you want\n• Use fetch() immediately after finding relevant files\n• For README: search for common terms like 'installation', 'features', '#'\n• For config: search for specific keys like 'name', 'version', 'dependencies'",
               inputSchema: {
                 type: "object",
                 properties: {
                   query: {
                     type: "string",
-                    description: "Text to search for within file contents. Use specific terms that would appear in the target files (e.g., function names, documentation headings like '# Installation', technology names, or key concepts). For README files, try terms like 'features', 'installation', 'getting started', or specific project names.",
+                    description: "Search term to find files. STRATEGIES:\n\n🎯 FILENAME SEARCH: Use exact filenames (e.g., 'README', 'package.json', 'index.js')\n📄 CONTENT SEARCH: Use text that appears inside files:\n  • For README: 'installation', 'getting started', '# ', '## '\n  • For package files: '\"name\"', 'dependencies', '\"version\"'\n  • For code: 'function', 'class', 'import', 'const'\n  • For config: specific keys or values you expect\n\n💡 TIPS: Short, specific terms work best. Avoid complex queries.",
                   },
                 },
                 required: ["query"],
@@ -346,7 +410,7 @@ app.post("/mcp", async (req, res) => {
             {
               name: "fetch",
               description:
-                "Retrieves the complete content of a specific file from the Git repository using its file path as the ID.\n\nThis tool returns the full text content of a file along with metadata. Use this after finding files through search to get their complete content.\n\nThe 'id' parameter should be the file path relative to the repository root, exactly as returned in search results (e.g., 'README.md', 'src/index.js', 'package.json').\n\nExamples:\n- fetch('README.md') → gets the complete README file\n- fetch('package.json') → gets the package configuration\n- fetch('src/components/App.js') → gets a specific source file\n- fetch('docs/api.md') → gets documentation files\n\nThe response includes the file's complete text content plus metadata like file size, last modified date, and file extension.",
+                "STEP 2: Get the complete content of a file using its file path.\n\nUse this IMMEDIATELY AFTER search() to get full file content. The 'id' parameter must be the exact file path from search results.\n\n🔄 WORKFLOW: search → fetch\n1. search() returns results with 'id' fields (file paths)\n2. fetch() gets complete content using that exact 'id'\n\n📋 EXAMPLES:\nAfter search('# ') returns: {\"id\": \"README.md\", \"title\": \"README.md\", ...}\n→ fetch('README.md') gets the complete README content\n\nAfter search('dependencies') returns: {\"id\": \"package.json\", \"title\": \"package.json\", ...}\n→ fetch('package.json') gets the complete package.json\n\nAfter search('function') returns: {\"id\": \"src/index.js\", \"title\": \"index.js\", ...}\n→ fetch('src/index.js') gets the complete source code\n\n⚠️ CRITICAL: Always copy the 'id' field exactly - don't modify the path!\n\n✅ Correct: fetch('README.md'), fetch('src/components/App.js')\n❌ Wrong: fetch('README'), fetch('App.js')\n\nThe response includes the complete file text plus metadata (size, modified date, etc.).",
               inputSchema: {
                 type: "object",
                 properties: {
