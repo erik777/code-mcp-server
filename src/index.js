@@ -491,6 +491,9 @@ logWithTimestamp('INFO', 'Fetch tool registered');
 // Create Express app for OAuth handling
 const app = express();
 
+// Import Hydra routes
+const hydraRoutes = require('./hydra-routes');
+
 app.use((req, res, next) => {
   console.log(`[MCP] ${req.method} ${req.originalUrl}`);
   next();
@@ -537,6 +540,13 @@ app.use(session({
 }));
 
 app.use(express.json());
+
+// Add body parser for Hydra form submissions
+app.use(express.urlencoded({ extended: true }));
+
+// Mount Hydra routes
+app.use('/hydra', hydraRoutes);
+logWithTimestamp('INFO', 'Hydra routes mounted on /hydra');
 
 // OAuth initiation endpoint
 app.get("/oauth/login", (req, res) => {
@@ -883,6 +893,10 @@ async function main() {
             'GET /oauth/callback', 
             'GET /oauth/status',
             'GET /oauth/logout',
+            'GET /hydra/login',
+            'POST /hydra/login',
+            'GET /hydra/consent',
+            'GET /hydra/health',
             'GET /health',
             'GET /.well-known/oauth-authorization-server',
             'POST /mcp (MCP protocol endpoint)',
@@ -900,6 +914,10 @@ async function main() {
                 'GET /oauth/callback - OAuth callback handler', 
                 'GET /oauth/status - Check authentication status',
                 'GET /oauth/logout - Logout user',
+                'GET /hydra/login - Hydra login challenge handler',
+                'POST /hydra/login - Hydra login form submission',
+                'GET /hydra/consent - Hydra consent challenge handler',
+                'GET /hydra/health - Hydra health check',
                 'GET /health - Server health check',
                 'GET /.well-known/oauth-authorization-server - OAuth server metadata',
                 'POST /mcp - MCP protocol endpoint (requires authentication)',
@@ -915,6 +933,8 @@ async function main() {
         logWithTimestamp('INFO', `📡 Server is listening on http://localhost:${PORT}`);
         logWithTimestamp('INFO', `🔗 MCP endpoint: http://localhost:${PORT}/mcp`);
         logWithTimestamp('INFO', `🔐 OAuth login: http://localhost:${PORT}/oauth/login`);
+        logWithTimestamp('INFO', `🔑 Hydra login: http://localhost:${PORT}/hydra/login`);
+        logWithTimestamp('INFO', `🛡️ Hydra consent: http://localhost:${PORT}/hydra/consent`);
         logWithTimestamp('INFO', `💊 Health check: http://localhost:${PORT}/health`);
         logWithTimestamp('INFO', `🌐 Public base URL: ${BASE_URL}`);
         logWithTimestamp('INFO', `📧 Allowed domain: ${ALLOWED_EMAIL_DOMAIN}`);

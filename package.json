@@ -2,10 +2,10 @@
     "name": "code-mcp-server",
     "version": "1.0.0",
     "description": "MCP-style Git Gateway for exposing local code to LLMs",
-    "main": "index.js",
+    "main": "src/index.js",
     "scripts": {
-        "start": "node index.js",
-        "dev": "node index.js",
+        "start": "node src/index.js",
+        "dev": "node src/index.js",
         "dev:test": "node test-mcp.js",
         "test": "node test-oauth.js",
         "test:oauth": "node test-oauth.js",
