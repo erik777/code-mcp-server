@@ -1,191 +1,184 @@
-# Code MCP Server
+# MCP Git Gateway with Google OAuth 2.0
 
-A Model Context Protocol (MCP) server that exposes Git repository contents to Large Language Models, built with the official `@modelcontextprotocol/sdk`.
+An MCP (Model Context Protocol) server that provides secure, authenticated access to Git repository contents using Google OAuth 2.0 authentication.
 
 ## Features
 
-- **Search**: Search for resources and return structured results with text snippets
-- **Fetch**: Retrieve detailed structured content for specific resources (files) with metadata
-- **OpenAI Compatible**: Uses standardized `search` and `fetch` tool names for ChatGPT deep research compatibility
-- **Security**: Path traversal protection to keep access within the repository
-- **Performance**: Skips common build directories (node_modules, .git, target, build, dist)
+- 🔐 **Google OAuth 2.0 Authentication** - Secure access control
+- 📂 **Git Repository Access** - Browse and search repository files
+- 🔍 **Multi-Strategy Search** - Filename and content-based search
+- 📖 **File Content Retrieval** - Get complete file contents with metadata
+- 🛡️ **Domain-Based Authorization** - Restrict access to specific email domains
+- 🌐 **Production Ready** - Built for reverse proxy deployment
 
-## Installation
+## Quick Start
 
-```bash
-npm install
-```
+1. **Install Dependencies**
+   ```bash
+   npm install
+   ```
 
-## Configuration
+2. **Configure OAuth** (see OAuth Setup section below)
 
-The server loads environment variables in the following priority order:
-
-1. **`.env.local`** (highest priority, for local development overrides)
-2. **`.env`** (default settings, can be committed to git)
-3. **Built-in defaults** (fallback values in code)
-
-### Setup
-
-1. Copy `env.example` to `.env` for default settings:
+3. **Set Environment Variables**
    ```bash
    cp env.example .env
+   # Edit .env with your configuration
    ```
 
-2. For local development, create `.env.local` to override defaults:
+4. **Start the Server**
    ```bash
-   # .env.local (not committed to git)
-   PORT=3131
-   REPO_PATH=repo
+   npm start
    ```
 
-This pattern allows you to:
-- Keep default settings in `.env` (committed to git)
-- Override locally in `.env.local` (ignored by git)
-- Share consistent defaults while allowing personal overrides
+## OAuth Setup
+
+### 1. Create Google OAuth Application
+
+1. Go to [Google Cloud Console](https://console.cloud.google.com/)
+2. Create a new project or select existing one
+3. Enable the **Google+ API** (if not already enabled)
+4. Go to **APIs & Services > Credentials**
+5. Click **Create Credentials > OAuth 2.0 Client IDs**
+6. Set application type to **Web application**
+7. Add authorized redirect URI:
+   ```
+   https://www.example.com/reverse/proxypath/oauth/callback
+   ```
+
+### 2. Configure Environment
+
+Copy `env.example` to `.env` and update:
+
+```env
+# Required OAuth Configuration
+GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your-client-secret
+SESSION_SECRET=generate-a-secure-random-string
+
+# Server Configuration  
+BASE_URL=https://www.example.com/reverse/proxypath
+PORT=3131
+REPO_PATH=./repo
+
+# Email Domain Restriction
+ALLOWED_EMAIL_DOMAIN=@yourdomain.com
+```
+
+**Generate a secure session secret:**
+```bash
+node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"
+```
+
+### 3. OAuth Endpoints
+
+- **Login**: `GET /oauth/login` - Initiate OAuth flow
+- **Callback**: `GET /oauth/callback` - OAuth callback handler
+- **Status**: `GET /oauth/status` - Check authentication status
+- **Logout**: `GET /oauth/logout` - Clear session
 
 ## Usage
 
-### Development Mode (Local Repository)
-
-To run the server against your local oc-sc repository:
-
-```bash
-npm run dev
+### 1. Authenticate
+Visit `/oauth/login` to start OAuth flow:
+```
+https://www.example.com/reverse/proxypath/oauth/login
 ```
 
-This will start the MCP server with `REPO_PATH=repo`.
-
-### Testing
-
-To test the server functionality:
-
-```bash
-npm test
+### 2. Access MCP Endpoint
+After authentication, access the MCP endpoint:
 ```
-
-This creates a test repository and verifies all tools work correctly.
-
-### Custom Repository
-
-To use with a different repository:
-
-```bash
-REPO_PATH=/path/to/your/repo node index.js
+POST https://www.example.com/reverse/proxypath/mcp
 ```
-
-## OpenAI Integration
-
-This server is designed to work with OpenAI's custom MCP connector. Here's how to connect it:
-
-### 1. Start the Server
-
-```bash
-npm run dev
-```
-
-The server will output:
-```
-🚀 Starting MCP Git Gateway Server
-📂 Repository path: /home/user/dev/myrepo
-🌐 Port: 3131
-🎉 MCP Git Gateway Server started successfully
-📡 Server is listening on http://localhost:3131
-🔗 MCP endpoint: http://localhost:3131/mcp
-💊 Health check: http://localhost:3131/health
-```
-
-### 2. Connect via OpenAI ChatGPT
-
-1. Go to ChatGPT and look for the MCP connection option
-2. Add a new MCP server with these settings:
-   - **Server URL**: `http://localhost:3131/mcp`
-   - **Method**: HTTP POST
-   - **Content-Type**: `application/json`
 
 ### 3. Available Tools
 
-#### OpenAI ChatGPT Compatibility
-
-This MCP server uses standardized tool names (`search` and `fetch`) that are specifically recognized by OpenAI's ChatGPT deep research feature. These tool names are required for proper integration with ChatGPT's MCP connector.
-
-Once connected, ChatGPT will have access to these tools:
-
-#### `search`
-Searches for resources using the provided query string and returns matching results.
+**Search Tool** - Find files by content or filename:
 ```json
 {
-  "query": "function name"
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/call",
+  "params": {
+    "name": "search",
+    "arguments": {
+      "query": "README"
+    }
+  }
 }
 ```
 
-Returns a structured object with:
-- `results`: Array of matching resources
-  - `id`: Resource ID (file path)
-  - `title`: Generated title from filename
-  - `text`: Text snippet showing matching lines
-  - `url`: null (for local files)
-
-#### `fetch`
-Retrieves detailed content for a specific resource identified by the given ID (file path).
+**Fetch Tool** - Get complete file content:
 ```json
 {
-  "id": "relative/path/to/file.js"
+  "jsonrpc": "2.0", 
+  "id": 2,
+  "method": "tools/call",
+  "params": {
+    "name": "fetch",
+    "arguments": {
+      "id": "README.md"
+    }
+  }
 }
 ```
 
-Returns a structured object with:
-- `id`: The resource ID (file path)
-- `title`: Generated title from filename
-- `text`: Complete file content
-- `url`: null (for local files)
-- `metadata`: File information (size, modification date, extension)
+## Security
 
-## Technical Details
+- **Domain Restriction**: Only users with email addresses ending with the configured domain are authorized
+- **Session Management**: Secure session-based authentication
+- **CSRF Protection**: OAuth state parameter validation
+- **Path Traversal Prevention**: Repository boundary enforcement
 
-- **Protocol**: Uses official MCP SDK for full specification compliance
-- **Transport**: HTTP POST/GET with Express.js server
-- **Port**: Configurable via `PORT` environment variable (default: 3131)
-- **Endpoints**: 
-  - `/mcp` - Main MCP protocol endpoint
-  - `/health` - Health check endpoint
-- **MCP Methods Supported**:
-  - `initialize` - Protocol handshake and capability negotiation
-  - `notifications/initialized` - Client readiness notification
-  - `tools/list` - List available tools
-  - `tools/call` - Execute tools (search, fetch)
-- **Security**: Path traversal protection ensures access stays within repository bounds
-- **Performance**: Intelligent directory filtering to avoid large build directories
-- **Error Handling**: Comprehensive error handling with descriptive messages
+## Deployment
 
-## Troubleshooting
+The server is designed for reverse proxy deployment where:
+- Public URL: `https://www.example.com/reverse/proxypath`
+- Internal Path: `/` (mapped by reverse proxy)
+- MCP Endpoint: `/mcp`
 
-### Server Won't Start
-- Ensure `REPO_PATH` points to a valid Git repository
-- Check that Node.js version supports the MCP SDK
+## API Reference
 
-### OpenAI Connection Issues
-- Verify the server starts without errors
-- Check that the command path and arguments are correct in OpenAI settings
-- Ensure environment variables are properly set
+### Health Check
+```bash
+GET /health
+```
+Returns server status and configuration.
 
-### No Files Found
-- Verify `REPO_PATH` is correct
-- Check repository permissions
-- Ensure the directory isn't empty
+### OAuth Workflow
+1. `GET /oauth/login` - Redirect to Google OAuth
+2. User authorizes application
+3. `GET /oauth/callback` - Handle OAuth response
+4. Session established for MCP access
+
+### MCP Protocol
+Standard MCP server supporting:
+- `initialize` - Server initialization
+- `tools/list` - Available tool listing  
+- `tools/call` - Tool execution
+
+## Environment Variables
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `GOOGLE_CLIENT_ID` | Yes | - | Google OAuth client ID |
+| `GOOGLE_CLIENT_SECRET` | Yes | - | Google OAuth client secret |
+| `SESSION_SECRET` | Yes | Random | Session encryption key |
+| `BASE_URL` | No | https://www.example.com/reverse/proxypath | Public base URL |
+| `PORT` | No | 3131 | Server port |
+| `REPO_PATH` | No | ./repo | Repository path |
+| `ALLOWED_EMAIL_DOMAIN` | No | @example.com | Allowed email domain for authorization |
 
 ## Development
 
-The server includes comprehensive logging to help debug any issues:
-
 ```bash
-# Enable verbose logging
-DEBUG=* npm run dev
+# Development mode with auto-reload
+npm run dev
+
+# Run tests (if available)
+npm test
 ```
 
-## Dependencies
+## License
 
-- `@modelcontextprotocol/sdk`: Official MCP SDK
-- `simple-git`: Git repository operations  
-- `dotenv`: Environment variable loading
-- `fs`: File system operations
-- `path`: Path manipulation utilities
+MIT
