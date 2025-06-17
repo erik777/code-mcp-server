@@ -1,20 +1,22 @@
-# Google OAuth 2.0 Setup Guide
+# MCP Server OAuth 2.0 Setup Guide
 
 ## Overview
 
-Your MCP server has been successfully migrated from a simple Express server to use the official `@modelcontextprotocol/sdk` with Google OAuth 2.0 authentication. This provides secure access control ensuring only authorized users can access the MCP endpoint.
+Your MCP server uses the official `@modelcontextprotocol/sdk` with configurable OAuth 2.0 authentication. This provides secure access control ensuring only authorized users can access the MCP endpoint. The server supports multiple OAuth providers with **Hydra** as the default.
 
 ## What's Been Implemented
 
-### 1. **OAuth 2.0 Integration**
-- ✅ Google OAuth 2.0 provider configuration
+### 1. **Multi-Provider OAuth 2.0 Integration**
+- ✅ **Hydra** OAuth 2.0 provider (default)
+- ✅ **Google** OAuth 2.0 provider support
+- ✅ **Custom** OAuth provider support
 - ✅ Session-based authentication management  
 - ✅ Configurable domain-based user authorization
 - ✅ CSRF protection with OAuth state parameter
 - ✅ Secure token validation and user info retrieval
 
-### 2. **MCP SDK Migration**
-- ✅ Migrated from custom Express routes to `StreamableHTTPServerTransport`
+### 2. **MCP SDK Integration**
+- ✅ Built on `StreamableHTTPServerTransport`
 - ✅ Proper MCP protocol implementation with initialization handshake
 - ✅ OAuth integration using `authorize` and `onTokenReceived` hooks
 - ✅ All existing tools (`search` and `fetch`) preserved and enhanced
@@ -26,51 +28,61 @@ Your MCP server has been successfully migrated from a simple Express server to u
 - ✅ Email domain validation
 - ✅ Token expiration handling
 
+### 4. **Dynamic Metadata Generation**
+- ✅ Dynamic `.well-known/oauth-authorization-server` endpoint
+- ✅ Smart BASE_URL vs provider URL handling
+- ✅ Production and development configuration support
+
+## Configuration Options
+
+### OAuth Provider Selection
+
+The server supports three OAuth providers via the `OAUTH_PROVIDER` environment variable:
+
+1. **`hydra`** (default) - Ory Hydra OAuth server
+2. **`google`** - Google OAuth 2.0
+3. **`custom`** - Custom OAuth provider
+
+### URL Configuration Strategy
+
+The server uses a two-tier URL configuration strategy:
+
+#### Production with Reverse Proxy
+Set `BASE_URL` to your public HTTPS URL. The server will use this for all OAuth metadata endpoints:
+```env
+BASE_URL=https://your-domain.com/mcp
+OAUTH_PROVIDER=hydra
+HYDRA_BROWSER_URL=https://your-domain.com/hydra
+```
+
+#### Development/Local Testing
+Leave `BASE_URL` undefined. The server will use provider-specific URLs:
+```env
+# BASE_URL not set
+OAUTH_PROVIDER=hydra
+HYDRA_BROWSER_URL=http://localhost:4444
+```
+
 ## Required Configuration
 
-### Step 1: Google Cloud Console Setup
-
-1. **Create/Select Project**
-   - Go to [Google Cloud Console](https://console.cloud.google.com/)
-   - Create new project or select existing one
-
-2. **Enable APIs**
-   - Navigate to "APIs & Services" > "Library"
-   - Enable "Google+ API" (for user profile access)
-
-3. **Create OAuth 2.0 Credentials**
-   - Go to "APIs & Services" > "Credentials"
-   - Click "Create Credentials" > "OAuth 2.0 Client IDs"
-   - Application type: **Web application**
-   - Name: `MCP Git Gateway`
-
-4. **Configure Redirect URI**
-   - Add authorized redirect URI:
-     ```
-     https://www.example.com/reverse/proxypath/oauth/callback
-     ```
-
-5. **Save Credentials**
-   - Copy the generated Client ID and Client Secret
-
-### Step 2: Environment Configuration
+### Step 1: Basic Server Setup
 
 1. **Copy Environment Template**
    ```bash
    cp env.example .env
    ```
 
-2. **Configure OAuth Settings**
+2. **Configure Basic Settings**
    ```env
-   # Required OAuth Configuration
-   GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
-   GOOGLE_CLIENT_SECRET=your-client-secret
-   SESSION_SECRET=generate-secure-random-string
-   
-   # Server Configuration  
-   BASE_URL=https://www.example.com/reverse/proxypath
+   # Server Configuration
    PORT=3131
    REPO_PATH=./repo
+   
+   # OAuth Provider (hydra is default)
+   OAUTH_PROVIDER=hydra
+   
+   # Session Security
+   SESSION_SECRET=generate-secure-random-string
    
    # Email Domain Restriction
    ALLOWED_EMAIL_DOMAIN=@yourdomain.com
@@ -81,28 +93,98 @@ Your MCP server has been successfully migrated from a simple Express server to u
    node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"
    ```
 
-### Step 3: Verification
+### Step 2: Provider-Specific Configuration
 
-1. **Test Configuration**
-   ```bash
-   npm run test:oauth
-   ```
+#### Option A: Hydra (Recommended)
 
-2. **Test Basic Setup**
-   ```bash
-   npm run test:basic
-   ```
+```env
+# Hydra Configuration
+OAUTH_PROVIDER=hydra
+OAUTH_CLIENT_ID=mcp-client
+OAUTH_CLIENT_SECRET=mcp-secret
 
-3. **Start Server**
-   ```bash
-   npm start
-   ```
+# Hydra URLs
+HYDRA_ADMIN_URL=http://localhost:4445
+HYDRA_BROWSER_URL=http://localhost:4444
+
+# For production with reverse proxy
+BASE_URL=https://your-domain.com/mcp
+```
+
+**Register MCP Client with Hydra:**
+```bash
+curl -X POST http://localhost:4445/clients \
+  -H "Content-Type: application/json" \
+  -d '{
+    "client_id": "mcp-client",
+    "client_secret": "mcp-secret",
+    "grant_types": ["authorization_code"],
+    "response_types": ["code"],
+    "scope": "openid profile email",
+    "redirect_uris": ["https://your-domain.com/mcp/oauth/callback"],
+    "token_endpoint_auth_method": "client_secret_post"
+  }'
+```
+
+#### Option B: Google OAuth
+
+```env
+# Google Configuration
+OAUTH_PROVIDER=google
+GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your-client-secret
+
+# For production
+BASE_URL=https://your-domain.com/mcp
+```
+
+**Google Cloud Console Setup:**
+1. Go to [Google Cloud Console](https://console.cloud.google.com/)
+2. Create/select project
+3. Enable Google+ API
+4. Create OAuth 2.0 Client ID (Web application)
+5. Add redirect URI: `https://your-domain.com/mcp/oauth/callback`
+
+#### Option C: Custom Provider
+
+```env
+# Custom Provider Configuration
+OAUTH_PROVIDER=custom
+OAUTH_CLIENT_ID=your-custom-client-id
+OAUTH_CLIENT_SECRET=your-custom-client-secret
+
+# Custom OAuth URLs
+OAUTH_AUTH_URL=https://your-provider.com/oauth2/auth
+OAUTH_TOKEN_URL=https://your-provider.com/oauth2/token
+OAUTH_USERINFO_URL=https://your-provider.com/oauth2/userinfo
+OAUTH_JWKS_URL=https://your-provider.com/.well-known/jwks.json
+```
+
+### Step 3: URL Configuration
+
+#### For Production (with reverse proxy):
+```env
+# Your public domain that routes to this MCP server
+BASE_URL=https://your-domain.com/mcp
+
+# If using Hydra, this should be your public Hydra URL
+HYDRA_BROWSER_URL=https://your-domain.com/hydra
+```
+
+#### For Development (localhost):
+```env
+# Leave BASE_URL commented out for local development
+# BASE_URL=https://your-domain.com/mcp
+
+# Local Hydra instance
+HYDRA_BROWSER_URL=http://localhost:4444
+```
 
 ## OAuth Workflow
 
 ### 1. **Authentication Flow**
 ```
-User → /oauth/login → Google OAuth → /oauth/callback → Session Created
+User → /oauth/login → OAuth Provider → /oauth/callback → Session Created
 ```
 
 ### 2. **MCP Access Flow**
@@ -120,6 +202,39 @@ Client → /mcp → Session Check → Token Validation → MCP Request Processin
 | `/oauth/logout` | GET | Clear session |
 | `/mcp` | POST | MCP protocol endpoint (protected) |
 | `/health` | GET | Server health check |
+| `/.well-known/oauth-authorization-server` | GET | OAuth metadata |
+
+**Hydra-specific endpoints (if using Hydra):**
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/hydra/login` | GET/POST | Hydra login challenge handler |
+| `/hydra/consent` | GET | Hydra consent challenge handler |
+
+## OAuth Metadata Behavior
+
+The server dynamically generates OAuth metadata based on your configuration:
+
+### Production Mode (BASE_URL set)
+```json
+{
+  "issuer": "https://your-domain.com/mcp",
+  "authorization_endpoint": "https://your-domain.com/hydra/oauth2/auth",
+  "token_endpoint": "https://your-domain.com/hydra/oauth2/token",
+  "userinfo_endpoint": "https://your-domain.com/hydra/userinfo",
+  "jwks_uri": "https://your-domain.com/hydra/.well-known/jwks.json"
+}
+```
+
+### Development Mode (BASE_URL not set)
+```json
+{
+  "issuer": "http://localhost:4444",
+  "authorization_endpoint": "http://localhost:4444/oauth2/auth",
+  "token_endpoint": "http://localhost:4444/oauth2/token",
+  "userinfo_endpoint": "http://localhost:4444/userinfo",
+  "jwks_uri": "http://localhost:4444/.well-known/jwks.json"
+}
+```
 
 ## Development & Testing
 
@@ -131,59 +246,94 @@ npm run dev
 # Test OAuth configuration
 npm run test:oauth
 
-# Test basic MCP functionality
+# Test basic MCP functionality  
 npm run test:basic
 ```
 
 ### Testing OAuth Flow
 1. Start server: `npm start`
 2. Visit: `http://localhost:3131/oauth/login`
-3. Complete Google OAuth flow
+3. Complete OAuth flow with your configured provider
 4. Test MCP endpoint: `POST http://localhost:3131/mcp`
 
-### Production Deployment
-- Ensure `BASE_URL` matches your public domain
-- Set `SESSION_SECRET` to a secure random value
-- Configure reverse proxy to route `/reverse/proxypath` to your application
-- Use HTTPS in production (set `cookie.secure: true`)
+### Testing with Hydra
+1. Start Hydra:
+   ```bash
+   docker run --rm \
+     -e URLS_SELF_ISSUER=http://localhost:4444 \
+     -e URLS_CONSENT=http://localhost:3131/hydra/consent \
+     -e URLS_LOGIN=http://localhost:3131/hydra/login \
+     -e DSN=memory \
+     -p 4444:4444 \
+     -p 4445:4445 \
+     oryd/hydra:v2.2 \
+     serve all --dev
+   ```
+
+2. Register MCP client (see Step 2A above)
+3. Start MCP server: `npm start`
+4. Test complete flow
+
+## Production Deployment
+
+### Reverse Proxy Configuration
+Configure your reverse proxy (nginx/Apache) to route:
+- `/mcp/*` → `http://localhost:3131/*`
+- `/hydra/*` → `http://localhost:4444/*` (if using Hydra)
+
+### Environment Variables
+```env
+# Production settings
+BASE_URL=https://your-domain.com/mcp
+HYDRA_BROWSER_URL=https://your-domain.com/hydra
+SESSION_SECRET=secure-random-production-secret
+ALLOWED_EMAIL_DOMAIN=@your-organization.com
+
+# Set secure cookies for HTTPS
+# (configure in code: cookie.secure: true)
+```
 
 ## Security Considerations
 
 ### Domain Restriction
 - Only users with email addresses ending with the configured domain are authorized
-- This is configured via the `ALLOWED_EMAIL_DOMAIN` environment variable
-- Default value is `@example.com` - change this to your organization's domain
+- Configure via `ALLOWED_EMAIL_DOMAIN` environment variable
+- Default: `@example.com` - **change this for production**
 
 ### Session Security
 - Sessions use secure random secrets
 - CSRF protection via OAuth state parameters
-- Session cookies are HTTP-only (configure `secure: true` for HTTPS)
+- Configure `cookie.secure: true` for HTTPS in production
 
-### Token Validation
-- Google OAuth tokens are validated on each MCP request
-- User email is re-verified on token validation
-- Invalid tokens result in authentication failure
+### URL Security
+- `HYDRA_BROWSER_URL` should point to a trusted Hydra instance
+- `BASE_URL` should be your legitimate public domain
+- Never expose internal URLs in production metadata
 
 ## Troubleshooting
 
 ### Common Issues
 
 1. **OAuth Redirect Mismatch**
-   - Ensure redirect URI in Google Console exactly matches:
-     `https://www.example.com/reverse/proxypath/oauth/callback`
+   - Ensure redirect URI in OAuth provider exactly matches your `BASE_URL`
+   - Format: `https://your-domain.com/mcp/oauth/callback`
 
-2. **Session Issues**
+2. **Metadata Endpoint Issues**
+   - Check if `BASE_URL` vs `HYDRA_BROWSER_URL` is set correctly
+   - Verify `/.well-known/oauth-authorization-server` returns correct URLs
+
+3. **Hydra Connection Issues**
+   - Confirm Hydra is running on expected ports (4444/4445)
+   - Check `HYDRA_ADMIN_URL` and `HYDRA_BROWSER_URL` configuration
+   - Verify MCP client is registered with Hydra
+
+4. **Session Issues**
    - Check `SESSION_SECRET` is set and consistent
    - Verify session middleware configuration
 
-3. **Domain Authorization Fails**
+5. **Domain Authorization Fails**
    - Confirm user email ends with the configured `ALLOWED_EMAIL_DOMAIN`
-   - Check user info retrieval from Google API
-
-4. **MCP Connection Issues**
-   - Verify OAuth authentication completed successfully
-   - Check session is maintained between requests
-   - Ensure `authorize` function in transport is working
+   - Check user info retrieval from OAuth provider
 
 ### Debug Mode
 ```bash
@@ -196,26 +346,14 @@ DEBUG=* npm start
 curl http://localhost:3131/health
 ```
 
-## Migration Summary
+### Test OAuth Metadata
+```bash
+curl http://localhost:3131/.well-known/oauth-authorization-server | jq
+```
 
-### What Changed
-- **Before**: Custom Express server with manual JSON-RPC handling
-- **After**: Official MCP SDK with `StreamableHTTPServerTransport`
-- **Security**: Added OAuth 2.0 authentication layer
-- **Architecture**: Proper MCP protocol compliance
+## Migration Notes
 
-### What Stayed the Same
-- All existing tool functionality (`search` and `fetch`)
-- File search algorithms and capabilities
-- Repository access patterns
-- Tool schemas and response formats
-
-### New Features
-- Secure OAuth 2.0 authentication
-- Configurable domain-based access control
-- Session management
-- CSRF protection
-- Enhanced error handling
-- Comprehensive logging
-
-The server is now production-ready with enterprise-grade authentication while maintaining all existing MCP tool functionality. 
+### From Previous Versions
+- `HYDRA_PUBLIC_URL` is now `HYDRA_BROWSER_URL` (backward compatible)
+- OAuth metadata is now dynamically generated
+- BASE_URL handling has been improved for production deployments 

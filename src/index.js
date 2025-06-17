@@ -41,14 +41,15 @@ const REDIRECT_URI = `${EFFECTIVE_BASE_URL}/oauth/callback`;
 // Provider-specific configuration
 let OAUTH_AUTH_URL, OAUTH_TOKEN_URL, OAUTH_USERINFO_URL, OAUTH_JWKS_URL;
 let OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET;
+let HYDRA_BROWSER_URL; // URL that browsers will be redirected to during OAuth flows
 
 switch (OAUTH_PROVIDER) {
     case 'hydra':
-        const HYDRA_PUBLIC_URL = process.env.HYDRA_PUBLIC_URL || HYDRA_INTERNAL_URL;
-        OAUTH_AUTH_URL = `${HYDRA_PUBLIC_URL}/oauth2/auth`;
-        OAUTH_TOKEN_URL = `${HYDRA_PUBLIC_URL}/oauth2/token`;
-        OAUTH_USERINFO_URL = `${HYDRA_PUBLIC_URL}/userinfo`;
-        OAUTH_JWKS_URL = `${HYDRA_PUBLIC_URL}/.well-known/jwks.json`;
+        HYDRA_BROWSER_URL = process.env.HYDRA_BROWSER_URL || process.env.HYDRA_PUBLIC_URL || HYDRA_INTERNAL_URL;
+        OAUTH_AUTH_URL = `${HYDRA_BROWSER_URL}/oauth2/auth`;
+        OAUTH_TOKEN_URL = `${HYDRA_BROWSER_URL}/oauth2/token`;
+        OAUTH_USERINFO_URL = `${HYDRA_BROWSER_URL}/userinfo`;
+        OAUTH_JWKS_URL = `${HYDRA_BROWSER_URL}/.well-known/jwks.json`;
         OAUTH_CLIENT_ID = process.env.OAUTH_CLIENT_ID || 'mcp-client';
         OAUTH_CLIENT_SECRET = process.env.OAUTH_CLIENT_SECRET || 'mcp-secret';
         break;
@@ -733,12 +734,29 @@ app.get("/health", (req, res) => {
 app.get("/.well-known/oauth-authorization-server", (req, res) => {
     logWithTimestamp('DEBUG', `OAuth authorization server metadata requested for provider: ${OAUTH_PROVIDER}`);
     try {
+        // Determine the base URL for OAuth endpoints
+        // If BASE_URL is defined, use it; otherwise fall back to provider-specific URL
+        let oauthBaseUrl;
+        if (BASE_URL) {
+            // Production case: use BASE_URL for all OAuth endpoints
+            oauthBaseUrl = BASE_URL;
+            logWithTimestamp('DEBUG', `Using BASE_URL for OAuth endpoints: ${oauthBaseUrl}`);
+        } else if (OAUTH_PROVIDER === 'hydra') {
+            // Dev/testing case: use HYDRA_BROWSER_URL for Hydra endpoints
+            oauthBaseUrl = HYDRA_BROWSER_URL;
+            logWithTimestamp('DEBUG', `Using HYDRA_BROWSER_URL for OAuth endpoints: ${oauthBaseUrl}`);
+        } else {
+            // For other providers, extract base URL from auth endpoint
+            oauthBaseUrl = OAUTH_AUTH_URL.split('/oauth2/auth')[0] || OAUTH_AUTH_URL.split('/o/oauth2')[0];
+            logWithTimestamp('DEBUG', `Using extracted base URL for OAuth endpoints: ${oauthBaseUrl}`);
+        }
+
         // Generate dynamic OAuth metadata based on configuration
         const metadata = {
-            issuer: OAUTH_PROVIDER === 'hydra' ? (process.env.HYDRA_PUBLIC_URL || HYDRA_INTERNAL_URL) : OAUTH_AUTH_URL.split('/oauth2/auth')[0] || OAUTH_AUTH_URL.split('/o/oauth2')[0],
-            authorization_endpoint: OAUTH_AUTH_URL,
-            token_endpoint: OAUTH_TOKEN_URL,
-            userinfo_endpoint: OAUTH_USERINFO_URL,
+            issuer: oauthBaseUrl,
+            authorization_endpoint: BASE_URL && OAUTH_PROVIDER === 'hydra' ? `${oauthBaseUrl}/oauth2/auth` : OAUTH_AUTH_URL,
+            token_endpoint: BASE_URL && OAUTH_PROVIDER === 'hydra' ? `${oauthBaseUrl}/oauth2/token` : OAUTH_TOKEN_URL,
+            userinfo_endpoint: BASE_URL && OAUTH_PROVIDER === 'hydra' ? `${oauthBaseUrl}/userinfo` : OAUTH_USERINFO_URL,
             scopes_supported: OAUTH_SCOPES,
             response_types_supported: ["code"],
             grant_types_supported: ["authorization_code"],
@@ -747,7 +765,7 @@ app.get("/.well-known/oauth-authorization-server", (req, res) => {
 
         // Add JWKS URI if available
         if (OAUTH_JWKS_URL) {
-            metadata.jwks_uri = OAUTH_JWKS_URL;
+            metadata.jwks_uri = BASE_URL && OAUTH_PROVIDER === 'hydra' ? `${oauthBaseUrl}/.well-known/jwks.json` : OAUTH_JWKS_URL;
         }
 
         // Add MCP-specific endpoints
@@ -762,7 +780,7 @@ app.get("/.well-known/oauth-authorization-server", (req, res) => {
         res.setHeader('Content-Type', 'application/json');
         res.json(metadata);
         
-        logWithTimestamp('SUCCESS', `OAuth authorization server metadata served for ${OAUTH_PROVIDER}`);
+        logWithTimestamp('SUCCESS', `OAuth authorization server metadata served for ${OAUTH_PROVIDER} (base: ${oauthBaseUrl})`);
     } catch (error) {
         logWithTimestamp('ERROR', 'Error generating OAuth metadata:', error.message);
         res.status(500).json({
