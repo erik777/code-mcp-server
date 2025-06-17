@@ -790,6 +790,26 @@ app.get("/.well-known/oauth-authorization-server", (req, res) => {
     }
 });
 
+// JWKS (JSON Web Key Set) endpoint for OAuth token verification
+app.get("/.well-known/jwks.json", (req, res) => {
+    logWithTimestamp('DEBUG', 'JWKS endpoint requested');
+    try {
+        const jwksPath = path.join(__dirname, 'jwks.json');
+        const jwks = JSON.parse(fs.readFileSync(jwksPath, 'utf8'));
+        
+        res.setHeader('Content-Type', 'application/json');
+        res.status(200).json(jwks);
+        
+        logWithTimestamp('SUCCESS', 'JWKS served successfully');
+    } catch (error) {
+        logWithTimestamp('ERROR', 'Error serving JWKS:', error.message);
+        res.status(500).json({
+            error: "Internal server error",
+            message: "Failed to load JWKS"
+        });
+    }
+});
+
 // Start the server with OAuth-protected MCP transport
 async function main() {
     logWithTimestamp('INFO', 'Setting up StreamableHTTPServerTransport with OAuth...');
@@ -988,6 +1008,7 @@ async function main() {
             'GET /hydra/health',
             'GET /health',
             'GET /.well-known/oauth-authorization-server',
+            'GET /.well-known/jwks.json',
             'POST /mcp (MCP protocol endpoint)',
             'GET /mcp (MCP SSE stream)',
             'DELETE /mcp (MCP session termination)'
@@ -1009,6 +1030,7 @@ async function main() {
                 'GET /hydra/health - Hydra health check',
                 'GET /health - Server health check',
                 'GET /.well-known/oauth-authorization-server - OAuth server metadata',
+                'GET /.well-known/jwks.json - JSON Web Key Set for token verification',
                 'POST /mcp - MCP protocol endpoint (requires authentication)',
                 'GET /mcp - MCP SSE stream (requires authentication)',
                 'DELETE /mcp - MCP session termination (requires authentication)'
