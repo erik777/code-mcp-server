@@ -22,26 +22,68 @@ const REPO_PATH = process.env.REPO_PATH || path.resolve(__dirname, "repo");
 const git = simpleGit(REPO_PATH);
 
 // OAuth Configuration
-// TODO: Replace these with your actual Google OAuth client credentials
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "your-google-client-id.apps.googleusercontent.com";
-const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "your-google-client-secret";
 const SESSION_SECRET = process.env.SESSION_SECRET || crypto.randomBytes(64).toString('hex');
-
-// OAuth URLs
-const GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
-const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
-const GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo";
-const OAUTH_SCOPES = ["openid", "email", "profile"];
 const ALLOWED_EMAIL_DOMAIN = process.env.ALLOWED_EMAIL_DOMAIN || "@example.com";
 
-// Public base URL for OAuth callbacks
-const BASE_URL = process.env.BASE_URL || "https://www.example.com/reverse/proxypath";
-const REDIRECT_URI = `${BASE_URL}/oauth/callback`;
+// OAuth Provider Configuration
+const OAUTH_PROVIDER = (process.env.OAUTH_PROVIDER || "hydra").toLowerCase();
+const OAUTH_SCOPES = (process.env.OAUTH_SCOPES || "openid profile email").split(' ');
+
+// Base URL Configuration with fallbacks
+const BASE_URL = process.env.BASE_URL;
+const MCP_INTERNAL_URL = process.env.MCP_INTERNAL_URL || "http://localhost:3131";
+const HYDRA_INTERNAL_URL = process.env.HYDRA_INTERNAL_URL || "http://localhost:4444";
+
+// Determine effective URLs
+const EFFECTIVE_BASE_URL = BASE_URL || MCP_INTERNAL_URL;
+const REDIRECT_URI = `${EFFECTIVE_BASE_URL}/oauth/callback`;
+
+// Provider-specific configuration
+let OAUTH_AUTH_URL, OAUTH_TOKEN_URL, OAUTH_USERINFO_URL, OAUTH_JWKS_URL;
+let OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET;
+
+switch (OAUTH_PROVIDER) {
+    case 'hydra':
+        const HYDRA_PUBLIC_URL = process.env.HYDRA_PUBLIC_URL || HYDRA_INTERNAL_URL;
+        OAUTH_AUTH_URL = `${HYDRA_PUBLIC_URL}/oauth2/auth`;
+        OAUTH_TOKEN_URL = `${HYDRA_PUBLIC_URL}/oauth2/token`;
+        OAUTH_USERINFO_URL = `${HYDRA_PUBLIC_URL}/userinfo`;
+        OAUTH_JWKS_URL = `${HYDRA_PUBLIC_URL}/.well-known/jwks.json`;
+        OAUTH_CLIENT_ID = process.env.OAUTH_CLIENT_ID || 'mcp-client';
+        OAUTH_CLIENT_SECRET = process.env.OAUTH_CLIENT_SECRET || 'mcp-secret';
+        break;
+    case 'google':
+        OAUTH_AUTH_URL = process.env.OAUTH_AUTH_URL || "https://accounts.google.com/o/oauth2/v2/auth";
+        OAUTH_TOKEN_URL = process.env.OAUTH_TOKEN_URL || "https://oauth2.googleapis.com/token";
+        OAUTH_USERINFO_URL = process.env.OAUTH_USERINFO_URL || "https://www.googleapis.com/oauth2/v3/userinfo";
+        OAUTH_JWKS_URL = process.env.OAUTH_JWKS_URL || "https://www.googleapis.com/oauth2/v3/certs";
+        OAUTH_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || process.env.OAUTH_CLIENT_ID || 'your-google-client-id.apps.googleusercontent.com';
+        OAUTH_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || process.env.OAUTH_CLIENT_SECRET || 'your-google-client-secret';
+        break;
+    case 'custom':
+        OAUTH_AUTH_URL = process.env.OAUTH_AUTH_URL;
+        OAUTH_TOKEN_URL = process.env.OAUTH_TOKEN_URL;
+        OAUTH_USERINFO_URL = process.env.OAUTH_USERINFO_URL;
+        OAUTH_JWKS_URL = process.env.OAUTH_JWKS_URL;
+        OAUTH_CLIENT_ID = process.env.OAUTH_CLIENT_ID || 'your-client-id';
+        OAUTH_CLIENT_SECRET = process.env.OAUTH_CLIENT_SECRET || 'your-client-secret';
+        if (!OAUTH_AUTH_URL || !OAUTH_TOKEN_URL || !OAUTH_USERINFO_URL) {
+            console.error('❌ ERROR: Custom OAuth provider requires OAUTH_AUTH_URL, OAUTH_TOKEN_URL, and OAUTH_USERINFO_URL to be set');
+            process.exit(1);
+        }
+        break;
+    default:
+        console.error(`❌ ERROR: Unsupported OAuth provider: ${OAUTH_PROVIDER}. Supported providers: hydra, google, custom`);
+        process.exit(1);
+}
 
 console.log("🚀 Starting MCP Git Gateway Server with OAuth 2.0");
 console.log(`📂 Repository path: ${REPO_PATH}`);
 console.log(`🌐 Port: ${PORT}`);
+console.log(`🔧 OAuth Provider: ${OAUTH_PROVIDER}`);
+console.log(`🌐 Base URL: ${EFFECTIVE_BASE_URL} ${BASE_URL ? '(configured)' : '(fallback)'}`);
 console.log(`🔐 OAuth Redirect URI: ${REDIRECT_URI}`);
+console.log(`🔑 OAuth Client ID: ${OAUTH_CLIENT_ID}`);
 
 // Ensure repo exists
 if (!fs.existsSync(REPO_PATH)) {
@@ -403,17 +445,20 @@ async function handleFileSearch(args) {
  */
 async function validateUser(token) {
     try {
-        logWithTimestamp('DEBUG', 'Validating OAuth token...');
+        logWithTimestamp('DEBUG', `Validating OAuth token for provider: ${OAUTH_PROVIDER}...`);
         
-        // Get user info from Google
-        const response = await axios.get(GOOGLE_USERINFO_URL, {
+        // Get user info from the configured OAuth provider
+        const response = await axios.get(OAUTH_USERINFO_URL, {
             headers: {
                 'Authorization': `Bearer ${token}`
             }
         });
 
-        const { email, name, picture } = response.data;
-        logWithTimestamp('INFO', `OAuth user: ${name} (${email})`);
+        const userInfo = response.data;
+        const email = userInfo.email;
+        const name = userInfo.name || userInfo.preferred_username || userInfo.sub || 'Unknown User';
+        
+        logWithTimestamp('INFO', `OAuth user: ${name} (${email}) via ${OAUTH_PROVIDER}`);
 
         // Check if email ends with allowed domain
         if (email && email.endsWith(ALLOWED_EMAIL_DOMAIN)) {
@@ -424,7 +469,7 @@ async function validateUser(token) {
             return false;
         }
     } catch (error) {
-        logWithTimestamp('ERROR', 'Error validating OAuth token:', error.message);
+        logWithTimestamp('ERROR', `Error validating OAuth token for ${OAUTH_PROVIDER}:`, error.message);
         return false;
     }
 }
@@ -550,20 +595,20 @@ logWithTimestamp('INFO', 'Hydra routes mounted on /hydra');
 
 // OAuth initiation endpoint
 app.get("/oauth/login", (req, res) => {
-    logWithTimestamp('INFO', 'OAuth login initiated');
+    logWithTimestamp('INFO', `OAuth login initiated with provider: ${OAUTH_PROVIDER}`);
     
     // Generate state parameter for CSRF protection
     const state = crypto.randomBytes(32).toString('hex');
     req.session.oauthState = state;
 
-    const authUrl = new URL(GOOGLE_AUTH_URL);
-    authUrl.searchParams.set('client_id', GOOGLE_CLIENT_ID);
+    const authUrl = new URL(OAUTH_AUTH_URL);
+    authUrl.searchParams.set('client_id', OAUTH_CLIENT_ID);
     authUrl.searchParams.set('redirect_uri', REDIRECT_URI);
     authUrl.searchParams.set('response_type', 'code');
     authUrl.searchParams.set('scope', OAUTH_SCOPES.join(' '));
     authUrl.searchParams.set('state', state);
 
-    logWithTimestamp('INFO', `Redirecting to Google OAuth: ${authUrl.toString()}`);
+    logWithTimestamp('INFO', `Redirecting to ${OAUTH_PROVIDER} OAuth: ${authUrl.toString()}`);
     res.redirect(authUrl.toString());
 });
 
@@ -591,10 +636,10 @@ app.get("/oauth/callback", async (req, res) => {
 
     try {
         // Exchange code for token
-        logWithTimestamp('INFO', 'Exchanging authorization code for access token');
-        const tokenResponse = await axios.post(GOOGLE_TOKEN_URL, {
-            client_id: GOOGLE_CLIENT_ID,
-            client_secret: GOOGLE_CLIENT_SECRET,
+        logWithTimestamp('INFO', `Exchanging authorization code for access token with ${OAUTH_PROVIDER}`);
+        const tokenResponse = await axios.post(OAUTH_TOKEN_URL, {
+            client_id: OAUTH_CLIENT_ID,
+            client_secret: OAUTH_CLIENT_SECRET,
             code: code,
             grant_type: 'authorization_code',
             redirect_uri: REDIRECT_URI
@@ -676,28 +721,53 @@ app.get("/health", (req, res) => {
         repo: REPO_PATH,
         oauth: {
             enabled: true,
-            provider: "Google",
-            allowedDomain: ALLOWED_EMAIL_DOMAIN
+            provider: OAUTH_PROVIDER,
+            allowedDomain: ALLOWED_EMAIL_DOMAIN,
+            baseUrl: EFFECTIVE_BASE_URL,
+            redirectUri: REDIRECT_URI
         }
     });
 });
 
 // OAuth authorization server metadata endpoint
 app.get("/.well-known/oauth-authorization-server", (req, res) => {
-    logWithTimestamp('DEBUG', 'OAuth authorization server metadata requested');
+    logWithTimestamp('DEBUG', `OAuth authorization server metadata requested for provider: ${OAUTH_PROVIDER}`);
     try {
-        const metadataPath = path.join(__dirname, 'oauth-metadata.json');
-        const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
-        
+        // Generate dynamic OAuth metadata based on configuration
+        const metadata = {
+            issuer: OAUTH_PROVIDER === 'hydra' ? (process.env.HYDRA_PUBLIC_URL || HYDRA_INTERNAL_URL) : OAUTH_AUTH_URL.split('/oauth2/auth')[0] || OAUTH_AUTH_URL.split('/o/oauth2')[0],
+            authorization_endpoint: OAUTH_AUTH_URL,
+            token_endpoint: OAUTH_TOKEN_URL,
+            userinfo_endpoint: OAUTH_USERINFO_URL,
+            scopes_supported: OAUTH_SCOPES,
+            response_types_supported: ["code"],
+            grant_types_supported: ["authorization_code"],
+            token_endpoint_auth_methods_supported: ["client_secret_post", "client_secret_basic"]
+        };
+
+        // Add JWKS URI if available
+        if (OAUTH_JWKS_URL) {
+            metadata.jwks_uri = OAUTH_JWKS_URL;
+        }
+
+        // Add MCP-specific endpoints
+        metadata.mcp_endpoints = {
+            login: `${EFFECTIVE_BASE_URL}/oauth/login`,
+            callback: `${EFFECTIVE_BASE_URL}/oauth/callback`,
+            logout: `${EFFECTIVE_BASE_URL}/oauth/logout`,
+            status: `${EFFECTIVE_BASE_URL}/oauth/status`,
+            mcp: `${EFFECTIVE_BASE_URL}/mcp`
+        };
+
         res.setHeader('Content-Type', 'application/json');
         res.json(metadata);
         
-        logWithTimestamp('SUCCESS', 'OAuth authorization server metadata served');
+        logWithTimestamp('SUCCESS', `OAuth authorization server metadata served for ${OAUTH_PROVIDER}`);
     } catch (error) {
-        logWithTimestamp('ERROR', 'Error serving OAuth metadata:', error.message);
+        logWithTimestamp('ERROR', 'Error generating OAuth metadata:', error.message);
         res.status(500).json({
             error: "Internal server error",
-            message: "Failed to load OAuth authorization server metadata"
+            message: "Failed to generate OAuth authorization server metadata"
         });
     }
 });
@@ -718,15 +788,16 @@ async function main() {
             },
             authorize: {
               type: 'oauth2',
-              authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
-              tokenUrl: 'https://oauth2.googleapis.com/token',
-              userInfoUrl: 'https://www.googleapis.com/oauth2/v3/userinfo',
-              scopes: ['openid', 'email', 'profile'],
-              clientId: 'YOUR_CLIENT_ID',
-              clientSecret: 'YOUR_CLIENT_SECRET',
+              authorizationUrl: OAUTH_AUTH_URL,
+              tokenUrl: OAUTH_TOKEN_URL,
+              userInfoUrl: OAUTH_USERINFO_URL,
+              scopes: OAUTH_SCOPES,
+              clientId: OAUTH_CLIENT_ID,
+              clientSecret: OAUTH_CLIENT_SECRET,
               onTokenReceived: async (token, userInfo) => {
-                if (userInfo.email !== 'you@example.com') {
-                  throw new Error('Access denied')
+                const email = userInfo.email;
+                if (!email || !email.endsWith(ALLOWED_EMAIL_DOMAIN)) {
+                  throw new Error(`Access denied. Only users with ${ALLOWED_EMAIL_DOMAIN} email addresses are allowed.`)
                 }
                 return userInfo
               }
@@ -929,15 +1000,18 @@ async function main() {
 
     // Start the Express server
     app.listen(PORT, "0.0.0.0", () => {
-        logWithTimestamp('SUCCESS', '🎉 MCP Git Gateway Server with OAuth started successfully');
+        logWithTimestamp('SUCCESS', `🎉 MCP Git Gateway Server with OAuth started successfully (${OAUTH_PROVIDER})`);
         logWithTimestamp('INFO', `📡 Server is listening on http://localhost:${PORT}`);
         logWithTimestamp('INFO', `🔗 MCP endpoint: http://localhost:${PORT}/mcp`);
         logWithTimestamp('INFO', `🔐 OAuth login: http://localhost:${PORT}/oauth/login`);
-        logWithTimestamp('INFO', `🔑 Hydra login: http://localhost:${PORT}/hydra/login`);
-        logWithTimestamp('INFO', `🛡️ Hydra consent: http://localhost:${PORT}/hydra/consent`);
+        if (OAUTH_PROVIDER === 'hydra') {
+            logWithTimestamp('INFO', `🔑 Hydra login: http://localhost:${PORT}/hydra/login`);
+            logWithTimestamp('INFO', `🛡️ Hydra consent: http://localhost:${PORT}/hydra/consent`);
+        }
         logWithTimestamp('INFO', `💊 Health check: http://localhost:${PORT}/health`);
-        logWithTimestamp('INFO', `🌐 Public base URL: ${BASE_URL}`);
+        logWithTimestamp('INFO', `🌐 Base URL: ${EFFECTIVE_BASE_URL} ${BASE_URL ? '(configured)' : '(fallback)'}`);
         logWithTimestamp('INFO', `📧 Allowed domain: ${ALLOWED_EMAIL_DOMAIN}`);
+        logWithTimestamp('INFO', `🔧 OAuth Provider: ${OAUTH_PROVIDER}`);
     });
 
     // Handle graceful shutdown
