@@ -1,23 +1,441 @@
-// MCP Git Gateway with minimal OAuth for ChatGPT compatibility
-// MODE 2: Simple + OAuth (Experimental) - Primary refactor objective
-// Stack: Node.js + Express + simple-git + minimal OAuth
+// Mode 2: Simple MCP Server + OAuth (Bearer-only, ChatGPT compatible)
+// Based on simple.js but with Bearer token authentication
+// No OAuth flows or sessions - pure stateless Bearer token validation
 
-function start({ enableAuth = true }) {
-    // Mode 2: Experimental OAuth mode
-    console.log(`[SIMPLE-AUTH] Starting simple OAuth MCP server (auth: ${enableAuth})`);
+const express = require("express");
+const simpleGit = require("simple-git");
+const fs = require("fs");
+const path = require("path");
+const axios = require("axios");
 
-    // Placeholder for Mode 2 implementation
-    console.log("🚧 [SIMPLE-AUTH] Mode 2 implementation coming in later phases");
-    console.log("🎯 [SIMPLE-AUTH] Primary objective: Enable ChatGPT Deep Research with OAuth");
-    console.log("💡 [SIMPLE-AUTH] Will implement minimal OAuth just for ChatGPT compatibility");
-    console.log("🔄 [SIMPLE-AUTH] Fallback to Mode 1 if this breaks ChatGPT compatibility");
+// Import authentication modules
+const { createBearerAuth } = require("../auth/bearer-only");
+const { parseOAuthConfig, validateOAuthConfig, logOAuthConfig } = require("../auth/oauth-config");
 
-    // For now, fall back to simple mode without auth to prevent startup errors
-    console.log("📝 [SIMPLE-AUTH] Temporarily falling back to simple mode logic");
+// Configuration
+const REPO_PATH = process.env.REPO_PATH || "/home/erik/dev/ws/cursor/oc-sc/oc-ui";
+const PORT = process.env.PORT || 3131;
+const BASE_URL = process.env.BASE_URL;
+const EFFECTIVE_BASE_URL = BASE_URL || `http://localhost:${PORT}`;
 
-    // Import simple mode and run without auth
-    const { start: startSimple } = require('./simple.js');
-    startSimple({ enableAuth: false });
+console.log("[SIMPLE-AUTH] Starting Mode 2: Simple MCP Server + OAuth (Bearer-only)");
+console.log("[SIMPLE-AUTH] 🎯 EXPERIMENTAL: Testing Bearer-only auth with ChatGPT Deep Research");
+console.log("[SIMPLE-AUTH] 📋 Features: MCP Tools + Bearer token validation (no OAuth flows)");
+
+// Parse OAuth configuration
+let oauthConfig;
+try {
+    oauthConfig = parseOAuthConfig(EFFECTIVE_BASE_URL);
+    validateOAuthConfig(oauthConfig);
+    logOAuthConfig(oauthConfig);
+} catch (error) {
+    console.error("[SIMPLE-AUTH] ❌ OAuth configuration error:", error.message);
+    process.exit(1);
+}
+
+// Utility functions (same as simple.js)
+function logWithTimestamp(level, message, ...args) {
+    const timestamp = new Date().toISOString();
+    const logLevels = {
+        DEBUG: "🔍",
+        INFO: "ℹ️",
+        SUCCESS: "✅",
+        WARN: "⚠️",
+        ERROR: "❌",
+    };
+    const icon = logLevels[level] || "📝";
+    console.log(`${timestamp} ${icon} [${level}] ${message}`, ...args);
+}
+
+function walkDirectory(dir) {
+    const files = [];
+    const git = simpleGit(REPO_PATH);
+
+    function walk(currentDir) {
+        const items = fs.readdirSync(currentDir);
+
+        for (const item of items) {
+            const itemPath = path.join(currentDir, item);
+            const stat = fs.statSync(itemPath);
+
+            if (stat.isDirectory() && !item.startsWith(".")) {
+                walk(itemPath);
+            } else if (stat.isFile()) {
+                const relativePath = path.relative(REPO_PATH, itemPath);
+                files.push(relativePath);
+            }
+        }
+    }
+
+    try {
+        walk(dir);
+        return files;
+    } catch (error) {
+        logWithTimestamp("ERROR", "Error walking directory:", error);
+        return [];
+    }
+}
+
+// File operations (same as simple.js)
+async function handleFileRead(args) {
+    try {
+        logWithTimestamp("INFO", `File read request: ${args.id}`);
+
+        const filePath = path.join(REPO_PATH, args.id);
+
+        if (!filePath.startsWith(REPO_PATH)) {
+            throw new Error("Access denied: path outside repository");
+        }
+
+        if (!fs.existsSync(filePath)) {
+            throw new Error("File not found");
+        }
+
+        const content = fs.readFileSync(filePath, "utf8");
+        const stats = fs.statSync(filePath);
+
+        logWithTimestamp("SUCCESS", `File read successful: ${args.id} (${content.length} chars)`);
+
+        return {
+            id: args.id,
+            title: `File: ${args.id}`,
+            text: content,
+            url: null,
+            metadata: {
+                size: stats.size.toString(),
+                modified: stats.mtime.toISOString(),
+                extension: path.extname(filePath),
+            },
+        };
+    } catch (error) {
+        logWithTimestamp("ERROR", `File read failed for ${args.id}:`, error.message);
+        throw error;
+    }
+}
+
+async function handleFileSearch(args) {
+    try {
+        logWithTimestamp("INFO", `File search request: "${args.query}"`);
+
+        const searchTerm = args.query.toLowerCase();
+        const allFiles = walkDirectory(REPO_PATH);
+
+        const results = [];
+        let processedFiles = 0;
+
+        for (const file of allFiles) {
+            try {
+                const filePath = path.join(REPO_PATH, file);
+                const content = fs.readFileSync(filePath, "utf8");
+                const lines = content.split("\n");
+
+                const fileNameMatch =
+                    file.toLowerCase().includes(searchTerm) ||
+                    path.basename(file).toLowerCase().includes(searchTerm);
+
+                const matchingLines = [];
+                let contentMatches = 0;
+
+                lines.forEach((line, index) => {
+                    if (line.toLowerCase().includes(searchTerm)) {
+                        contentMatches++;
+                        if (matchingLines.length < 10) {
+                            matchingLines.push({
+                                lineNumber: index + 1,
+                                content: line.trim(),
+                            });
+                        }
+                    }
+                });
+
+                if (fileNameMatch || contentMatches > 0) {
+                    const priority = fileNameMatch ? 2 : contentMatches > 5 ? 1 : 0;
+                    results.push(createResult(file, matchingLines, priority));
+                }
+
+                processedFiles++;
+            } catch (error) {
+                if (error.code !== "EISDIR" && !error.message.includes("ENOENT")) {
+                    logWithTimestamp("WARN", `Skipping file ${file}:`, error.message);
+                }
+            }
+        }
+
+        results.sort((a, b) => {
+            const priorityDiff = (b.priority || 0) - (a.priority || 0);
+            if (priorityDiff !== 0) return priorityDiff;
+            return a.id.localeCompare(b.id);
+        });
+
+        const limitedResults = results.slice(0, 50);
+
+        logWithTimestamp(
+            "SUCCESS",
+            `Search completed: "${args.query}" → ${limitedResults.length} results (processed ${processedFiles} files)`
+        );
+
+        return { results: limitedResults };
+    } catch (error) {
+        logWithTimestamp("ERROR", `Search failed for "${args.query}":`, error.message);
+        throw error;
+    }
+
+    function createResult(file, matchingLines, priority = 0) {
+        let snippet = `File: ${file}`;
+
+        if (matchingLines.length > 0) {
+            snippet += `\n\nMatching lines:\n`;
+            matchingLines.forEach((match) => {
+                snippet += `Line ${match.lineNumber}: ${match.content}\n`;
+            });
+
+            if (matchingLines.length === 10) {
+                snippet += "... (showing first 10 matches)\n";
+            }
+        }
+
+        return {
+            id: file,
+            title: `${path.basename(file)} (${file})`,
+            text: snippet,
+            url: null,
+            priority,
+        };
+    }
+}
+
+// MCP JSON-RPC handler (similar to simple.js but with auth)
+async function handleMCPRequest(req, res) {
+    const { id, method, params } = req.body;
+
+    logWithTimestamp("DEBUG", `🚀 === ${method.toUpperCase()} METHOD ===`);
+
+    try {
+        let result;
+
+        switch (method) {
+            case "initialize":
+                logWithTimestamp("INFO", "Client requesting server capabilities");
+                result = {
+                    protocolVersion: "2024-11-05",
+                    capabilities: { tools: {} },
+                    serverInfo: { name: "mcp-git-gateway", version: "1.0.0" },
+                    instructions: "You are a helpful assistant with access to a Git repository."
+                };
+                break;
+
+            case "tools/list":
+                logWithTimestamp("INFO", "Client requesting available tools");
+                result = {
+                    tools: [{
+                            name: "search",
+                            description: "STEP 1: Search for files in the Git repository by filename or content.",
+                            inputSchema: {
+                                type: "object",
+                                properties: {
+                                    query: { type: "string", description: "Search query for filenames or file content" }
+                                },
+                                required: ["query"]
+                            },
+                            outputSchema: {
+                                type: "object",
+                                properties: {
+                                    results: {
+                                        type: "array",
+                                        items: {
+                                            type: "object",
+                                            properties: {
+                                                id: { type: "string", description: "ID of the resource." },
+                                                title: { type: "string", description: "Title or headline of the resource." },
+                                                text: { type: "string", description: "Text snippet or summary from the resource." },
+                                                url: { type: ["string", "null"], description: "URL of the resource. Optional but needed for citations to work." }
+                                            },
+                                            required: ["id", "title", "text"]
+                                        }
+                                    }
+                                },
+                                required: ["results"]
+                            }
+                        },
+                        {
+                            name: "fetch",
+                            description: "STEP 2: Get the complete content of any file using its file path.",
+                            inputSchema: {
+                                type: "object",
+                                properties: {
+                                    id: { type: "string", description: "File path relative to the repository root (e.g., 'README.md', 'src/index.js', 'package.json'). This should be the exact 'id' value returned from search results." }
+                                },
+                                required: ["id"]
+                            },
+                            outputSchema: {
+                                type: "object",
+                                properties: {
+                                    id: { type: "string", description: "ID of the resource." },
+                                    title: { type: "string", description: "Title or headline of the fetched resource." },
+                                    text: { type: "string", description: "Complete textual content of the resource." },
+                                    url: { type: ["string", "null"], description: "URL of the resource. Optional but needed for citations to work." },
+                                    metadata: { type: ["object", "null"], additionalProperties: { type: "string" }, description: "Optional metadata providing additional context." }
+                                },
+                                required: ["id", "title", "text"]
+                            }
+                        }
+                    ]
+                };
+                break;
+
+            case "tools/call":
+                const { name, arguments: toolArgs } = params;
+                logWithTimestamp("INFO", `Tool '${name}' called with args: ${JSON.stringify(toolArgs)}`);
+
+                if (name === "search") {
+                    const searchResult = await handleFileSearch(toolArgs);
+                    result = { content: [{ type: "text", text: JSON.stringify(searchResult, null, 2) }] };
+                } else if (name === "fetch") {
+                    const fetchResult = await handleFileRead(toolArgs);
+                    result = { content: [{ type: "text", text: JSON.stringify(fetchResult, null, 2) }] };
+                } else {
+                    throw new Error(`Unknown tool: ${name}`);
+                }
+                break;
+
+            default:
+                throw new Error(`Unknown method: ${method}`);
+        }
+
+        const response = { jsonrpc: "2.0", id, result };
+        logWithTimestamp("SUCCESS", `📤 === OUTGOING MCP RESPONSE ===`);
+        logWithTimestamp("DEBUG", `Response: ${JSON.stringify(response)}`);
+        res.json(response);
+
+    } catch (error) {
+        logWithTimestamp("ERROR", `❌ ${method} error: ${error.message}`);
+        const errorResponse = {
+            jsonrpc: "2.0",
+            id,
+            error: { code: -32603, message: error.message }
+        };
+        res.status(500).json(errorResponse);
+    }
+}
+
+// Handle notifications
+async function handleMCPNotification(req, res) {
+    const { method } = req.body;
+
+    if (method === "notifications/initialized") {
+        logWithTimestamp("SUCCESS", "🎉 === INITIALIZED NOTIFICATION ===");
+        logWithTimestamp("INFO", "Client has completed initialization and is ready for normal operations");
+    }
+
+    res.status(200).end(); // Notifications don't require responses
+}
+
+// Start function for mode system
+async function start({ enableAuth = true }) {
+    try {
+        console.log("[SIMPLE-AUTH] 🚀 Starting MCP Git Gateway Server (Bearer-only OAuth)");
+        console.log(`[SIMPLE-AUTH] 📂 Repository path: ${REPO_PATH}`);
+        console.log(`[SIMPLE-AUTH] 🌐 Port: ${PORT}`);
+
+        // Create Express app
+        const app = express();
+        app.use(express.json());
+
+        console.log("[SIMPLE-AUTH] 📨 === MCP REQUEST LOGGING ===");
+
+        // Request logging middleware
+        app.use((req, res, next) => {
+            if (req.path === "/mcp") {
+                console.log("📨 === INCOMING MCP REQUEST ===");
+                console.log(`Method: ${req.method}`);
+                console.log(`Content-Type: ${req.get("content-type")}`);
+                console.log(`Body: ${JSON.stringify(req.body)}`);
+            }
+            next();
+        });
+
+        // Response logging middleware
+        const originalSend = app.response.send;
+        app.response.send = function(body) {
+            if (this.req.path === "/mcp") {
+                console.log("📤 === OUTGOING MCP RESPONSE ===");
+                console.log(`Response: ${body}`);
+            }
+            return originalSend.call(this, body);
+        };
+
+        // Create Bearer authentication middleware
+        const bearerAuth = createBearerAuth(oauthConfig);
+
+        // Health check endpoint (no auth required)
+        app.get("/health", (req, res) => {
+            logWithTimestamp("DEBUG", "Health check requested");
+            res.json({
+                status: "ok",
+                server: "MCP Git Gateway (Simple + Bearer Auth)",
+                version: "1.0.0",
+                mode: "simple-auth",
+                repo: REPO_PATH,
+                oauth: {
+                    enabled: true,
+                    provider: oauthConfig.provider,
+                    allowedDomain: oauthConfig.allowedDomain,
+                    authType: "bearer-only",
+                    note: "No OAuth flows available - supply Bearer token directly"
+                },
+            });
+        });
+
+        // MCP endpoint with Bearer authentication
+        app.post("/mcp", bearerAuth, async(req, res) => {
+            logWithTimestamp("INFO", "📨 MCP POST request received");
+
+            // Handle notifications differently (they don't expect responses)
+            if (req.body.method && req.body.method.startsWith("notifications/")) {
+                await handleMCPNotification(req, res);
+            } else {
+                await handleMCPRequest(req, res);
+            }
+        });
+
+        // Disable other HTTP methods for MCP endpoint
+        app.get("/mcp", bearerAuth, (req, res) => {
+            res.status(405).json({
+                jsonrpc: "2.0",
+                error: {
+                    code: -32601,
+                    message: "Method not allowed. Use POST for MCP requests.",
+                },
+                id: null,
+            });
+        });
+
+        app.delete("/mcp", bearerAuth, (req, res) => {
+            res.status(405).json({
+                jsonrpc: "2.0",
+                error: {
+                    code: -32601,
+                    message: "Method not allowed. Use POST for MCP requests.",
+                },
+                id: null,
+            });
+        });
+
+        // Start the server
+        app.listen(PORT, () => {
+            console.log("[SIMPLE-AUTH] 🎉 MCP Git Gateway Server started successfully");
+            console.log(`[SIMPLE-AUTH] 📡 Server is listening on http://localhost:${PORT}`);
+            console.log(`[SIMPLE-AUTH] 🔗 MCP endpoint: http://localhost:${PORT}/mcp`);
+            console.log(`[SIMPLE-AUTH] 💊 Health check: http://localhost:${PORT}/health`);
+            console.log("[SIMPLE-AUTH] 🔐 Authentication: Bearer token required");
+            console.log(`[SIMPLE-AUTH] 🎯 Provider: ${oauthConfig.provider} (${oauthConfig.allowedDomain})`);
+            console.log("[SIMPLE-AUTH] ⚠️  No OAuth flows - supply Bearer token directly in Authorization header");
+        });
+
+    } catch (error) {
+        console.error("[SIMPLE-AUTH] ❌ Failed to start server:", error);
+        process.exit(1);
+    }
 }
 
 module.exports = { start };

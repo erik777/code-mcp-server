@@ -5,7 +5,7 @@
 require("dotenv").config({ path: ".env.local" });
 require("dotenv").config({ path: ".env" });
 
-const { McpServer } = require("@modelcontextprotocol/sdk/server/mcp.js");
+const { McpServer } = require("@modelcontextprotocol/sdk/dist/cjs/server/mcp");
 const {
     StreamableHTTPServerTransport,
 } = require("@modelcontextprotocol/sdk/server/streamableHttp.js");
@@ -19,9 +19,13 @@ const cookieParser = require("cookie-parser");
 const axios = require("axios");
 const crypto = require("crypto");
 
+// Import authentication modules
+const { createSessionAuth, createSessionMiddleware, setupOAuthRoutes } = require("../auth/oauth-session");
+const { parseOAuthConfig, validateOAuthConfig, logOAuthConfig } = require("../auth/oauth-config");
+
 // Configuration
 const PORT = process.env.PORT || 3131;
-const REPO_PATH = process.env.REPO_PATH || path.resolve(__dirname, "repo");
+const REPO_PATH = process.env.REPO_PATH || "/home/erik/dev/ws/cursor/oc-sc/oc-ui";
 const git = simpleGit(REPO_PATH);
 
 // OAuth Configuration
