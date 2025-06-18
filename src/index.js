@@ -13,6 +13,7 @@ const path = require("path");
 const simpleGit = require("simple-git");
 const express = require("express");
 const session = require("express-session");
+const cookieParser = require("cookie-parser");
 const axios = require("axios");
 const crypto = require("crypto");
 
@@ -586,6 +587,9 @@ app.use(session({
 }));
 
 app.use(express.json());
+
+// Add cookie parser for CSRF handling
+app.use(cookieParser());
 
 // Add body parser for Hydra form submissions
 app.use(express.urlencoded({ extended: true }));

@@ -22,6 +22,18 @@ function logWithTimestamp(level, message, ...args) {
     console.log(`[${timestamp}] ${levelEmoji[level] || '📝'} [HYDRA] ${message}`, ...args);
 }
 
+// Helper function to set CSRF cookie with proper security settings
+function setCsrfCookie(res, name, value) {
+    const secure = process.env.NODE_ENV !== 'development'; // secure=true except on localhost dev
+    logWithTimestamp('DEBUG', `Setting CSRF cookie: ${name} (secure: ${secure})`);
+
+    res.cookie(name, value, {
+        httpOnly: true,
+        sameSite: 'None',
+        secure: secure
+    });
+}
+
 /**
  * Login Challenge Handler - presents login form
  * GET /hydra/login?login_challenge=<challenge>
@@ -37,6 +49,9 @@ router.get('/login', async(req, res) => {
     logWithTimestamp('INFO', `Handling login challenge: ${challenge}`);
 
     try {
+        // 🔑 1) Set CSRF cookie before any other processing
+        setCsrfCookie(res, 'hydra_login_csrf', challenge);
+
         // Get login request information from Hydra
         const loginRequest = await axios.get(
             `${HYDRA_ADMIN_URL}/oauth2/auth/requests/login?login_challenge=${challenge}`
@@ -142,6 +157,9 @@ router.get('/consent', async(req, res) => {
     logWithTimestamp('INFO', `Handling consent challenge: ${challenge}`);
 
     try {
+        // 🔑 Set consent CSRF cookie before any other processing
+        setCsrfCookie(res, 'hydra_consent_csrf', challenge);
+
         // Get consent request information from Hydra
         const consentRequest = await axios.get(
             `${HYDRA_ADMIN_URL}/oauth2/auth/requests/consent?consent_challenge=${challenge}`
