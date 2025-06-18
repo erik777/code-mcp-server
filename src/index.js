@@ -571,7 +571,17 @@ app.use((req, res, next) => {
     // Capture response details
     const originalSend = res.send;
     res.send = function(body) {
-        logWithTimestamp('INFO', `📤 HTTP ${method} ${url} - Status: ${res.statusCode} - Size: ${Buffer.isBuffer(body) ? body.length : (typeof body === 'string' ? body.length : JSON.stringify(body).length)} bytes`);
+        let size = 0;
+        if (body !== undefined && body !== null) {
+            if (Buffer.isBuffer(body)) {
+                size = body.length;
+            } else if (typeof body === 'string') {
+                size = body.length;
+            } else {
+                size = JSON.stringify(body).length;
+            }
+        }
+        logWithTimestamp('INFO', `📤 HTTP ${method} ${url} - Status: ${res.statusCode} - Size: ${size} bytes`);
         return originalSend.call(this, body);
     };
     
@@ -968,13 +978,23 @@ async function main() {
     const mcpGetHandler = async (req, res) => {
         logWithTimestamp('INFO', 'MCP GET request received (SSE stream)');
         
-        const sessionId = req.headers['mcp-session-id'] || req.session.mcpSessionId;
+        let sessionId = req.headers['mcp-session-id'] || req.session.mcpSessionId;
+        let transport;
+        
+        // Create new transport if none exists
         if (!sessionId || !transports[sessionId]) {
-            logWithTimestamp('ERROR', 'MCP GET request with invalid or missing session ID');
-            return res.status(400).json({
-                error: "Invalid or missing session ID",
-                message: "Please make a POST request first to establish a session"
-            });
+            const newTransport = createTransport();
+            const newId = newTransport.sessionId || crypto.randomBytes(16).toString('hex');
+            transports[newId] = newTransport;
+            req.session.mcpSessionId = newId;
+            sessionId = newId;
+            transport = newTransport;
+            
+            // Connect server to transport
+            await server.connect(transport);
+            logWithTimestamp('INFO', `SSE stream started without prior POST; created session ${sessionId}`);
+        } else {
+            transport = transports[sessionId];
         }
 
         try {
@@ -982,10 +1002,9 @@ async function main() {
             if (lastEventId) {
                 logWithTimestamp('INFO', `MCP client reconnecting with Last-Event-ID: ${lastEventId}`);
             } else {
-                logWithTimestamp('INFO', `Establishing new SSE stream for session ${sessionId}`);
+                logWithTimestamp('INFO', `Establishing SSE stream for session ${sessionId}`);
             }
 
-            const transport = transports[sessionId];
             await transport.handleRequest(req, res);
             
         } catch (error) {
@@ -1004,11 +1023,11 @@ async function main() {
         logWithTimestamp('INFO', 'MCP DELETE request received (session termination)');
         
         const sessionId = req.headers['mcp-session-id'] || req.session.mcpSessionId;
+        
+        // Accept DELETE even if transport doesn't exist
         if (!sessionId || !transports[sessionId]) {
-            logWithTimestamp('ERROR', 'MCP DELETE request with invalid or missing session ID');
-            return res.status(400).json({
-                error: "Invalid or missing session ID"
-            });
+            logWithTimestamp('INFO', 'MCP DELETE request with no active session - returning 204');
+            return res.status(204).send(); // No content
         }
 
         try {
