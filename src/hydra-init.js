@@ -84,6 +84,38 @@ async function initHydra() {
                 redirect_uris: existingClientResponse.data.redirect_uris,
                 scope: existingClientResponse.data.scope
             });
+
+            // Check if REDIRECT_URI2 needs to be added to existing client
+            const client = existingClientResponse.data;
+            let needsUpdate = false;
+
+            if (process.env.REDIRECT_URI2) {
+                if (!client.redirect_uris.includes(process.env.REDIRECT_URI2)) {
+                    logWithTimestamp('INFO', `Adding REDIRECT_URI2 to existing client: ${process.env.REDIRECT_URI2}`);
+                    client.redirect_uris.push(process.env.REDIRECT_URI2);
+                    needsUpdate = true;
+                } else {
+                    logWithTimestamp('DEBUG', 'REDIRECT_URI2 already present in client configuration');
+                }
+            }
+
+            if (needsUpdate) {
+                try {
+                    logWithTimestamp('DEBUG', 'Updating client with new redirect URI');
+                    await axios.put(`${hydraAdminUrl}/clients/${clientId}`, client, {
+                        timeout: 10000,
+                        headers: {
+                            'Content-Type': 'application/json'
+                        }
+                    });
+                    logWithTimestamp('SUCCESS', `Client '${clientId}' updated with REDIRECT_URI2`);
+                    logWithTimestamp('INFO', `🔗 Updated redirect URIs: ${client.redirect_uris.join(', ')}`);
+                } catch (updateError) {
+                    logWithTimestamp('ERROR', `Failed to update client with REDIRECT_URI2: ${updateError.message}`);
+                    // Don't throw - continue with existing client
+                }
+            }
+
             return;
 
         } catch (error) {

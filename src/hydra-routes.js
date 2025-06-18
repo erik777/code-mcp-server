@@ -135,7 +135,7 @@ router.post('/login', async(req, res) => {
     try {
         // Accept the login request with Hydra Admin API
         logWithTimestamp('DEBUG', `Accepting login challenge: ${login_challenge} for user: ${email}`);
-        const { data } = await axios.post(
+        const { data } = await axios.put(
             `${HYDRA_ADMIN_URL}/admin/oauth2/auth/requests/login/accept?login_challenge=${login_challenge}`, {
                 subject: email,
                 remember: false
@@ -257,7 +257,7 @@ router.post('/consent', async(req, res) => {
         if (submit === 'accept') {
             // Accept consent with Hydra Admin API
             logWithTimestamp('DEBUG', `Accepting consent challenge: ${consent_challenge}`);
-            const { data } = await axios.post(
+            const { data } = await axios.put(
                 `${HYDRA_ADMIN_URL}/admin/oauth2/auth/requests/consent/accept?consent_challenge=${consent_challenge}`, {
                     grant_scope: ['openid', 'profile', 'email'],
                     remember: false
@@ -271,7 +271,7 @@ router.post('/consent', async(req, res) => {
         } else {
             // Deny consent
             logWithTimestamp('WARN', `Consent denied for challenge: ${consent_challenge}`);
-            const { data } = await axios.post(
+            const { data } = await axios.put(
                 `${HYDRA_ADMIN_URL}/admin/oauth2/auth/requests/consent/reject?consent_challenge=${consent_challenge}`, {
                     error: 'access_denied',
                     error_description: 'User denied access'
