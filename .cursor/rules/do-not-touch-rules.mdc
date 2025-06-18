@@ -1,0 +1,14 @@
+---
+description: do-not-touch-rules
+globs: 
+alwaysApply: true
+---
+
+- Never remove `<link>`, `<script>`, or `<meta>` tags from `index.html` unless explicitly asked.
+- Never delete unused sections like `devDependenciesOld` or `optionalDependencies` unless instructed.
+- Avoid deleting legacy animations, font references, or global includes—these may still be in use outside Vite scope.
+- Always confirm before removing anything that looks unused or unclear.
+- Never revert a git commit made by the user unless explicitly told to do so.  Ask the user if you think it can help.  
+- Do not edit or delete any `.env.local.*` files.
+
+ 
