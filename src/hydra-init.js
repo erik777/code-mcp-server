@@ -47,11 +47,18 @@ async function initHydra() {
         throw new Error(`Missing required environment variables for Hydra initialization: ${missingVars.join(', ')}`);
     }
 
-    // Determine redirect URI (same logic as main app)
+    // Determine redirect URIs (same logic as main app)
     const BASE_URL = process.env.BASE_URL;
     const MCP_INTERNAL_URL = process.env.MCP_INTERNAL_URL || "http://localhost:3131";
     const EFFECTIVE_BASE_URL = BASE_URL || MCP_INTERNAL_URL;
     const REDIRECT_URI = `${EFFECTIVE_BASE_URL}/oauth/callback`;
+
+    // Build redirect URIs array with support for REDIRECT_URI2
+    const BASE_REDIRECTS = [REDIRECT_URI];
+    if (process.env.REDIRECT_URI2) {
+        logWithTimestamp('DEBUG', `Adding additional redirect URI: ${process.env.REDIRECT_URI2}`);
+        BASE_REDIRECTS.push(process.env.REDIRECT_URI2);
+    }
 
     const hydraAdminUrl = requiredVars.HYDRA_ADMIN_URL;
     const clientId = requiredVars.OAUTH_CLIENT_ID;
@@ -93,12 +100,15 @@ async function initHydra() {
         const clientConfig = {
             client_id: clientId,
             client_secret: clientSecret,
-            grant_types: ["authorization_code"],
+            grant_types: ["authorization_code", "refresh_token"],
             response_types: ["code"],
             scope: "openid profile email",
-            redirect_uris: [REDIRECT_URI],
+            redirect_uris: BASE_REDIRECTS,
             token_endpoint_auth_method: "client_secret_post"
         };
+
+        // Ensure redirect URIs are unique
+        clientConfig.redirect_uris = [...new Set(clientConfig.redirect_uris)];
 
         logWithTimestamp('DEBUG', 'Registering new client with config:', {
             client_id: clientConfig.client_id,
@@ -117,7 +127,7 @@ async function initHydra() {
         });
 
         logWithTimestamp('SUCCESS', `✨ Hydra client '${clientId}' created successfully!`);
-        logWithTimestamp('INFO', `🔗 Client redirect URI: ${REDIRECT_URI}`);
+        logWithTimestamp('INFO', `🔗 Client redirect URIs: ${clientConfig.redirect_uris.join(', ')}`);
         logWithTimestamp('INFO', `🔧 Client configuration complete`);
 
     } catch (error) {

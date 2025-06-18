@@ -34,6 +34,17 @@ function setCsrfCookie(res, name, value) {
     });
 }
 
+// Helper function to get human-readable scope descriptions
+function getScopeDescription(scope) {
+    const descriptions = {
+        'openid': 'Access to your identity',
+        'profile': 'Access to your basic profile information',
+        'email': 'Access to your email address',
+        'offline_access': 'Access to refresh tokens'
+    };
+    return descriptions[scope] || 'Access to additional information';
+}
+
 /**
  * Login Challenge Handler - presents login form
  * GET /hydra/login?login_challenge=<challenge>
@@ -80,9 +91,8 @@ router.get('/login', async(req, res) => {
                 Please enter your email address to continue.
                 <br><strong>Note:</strong> Only emails ending with <code>${ALLOWED_EMAIL_DOMAIN}</code> are allowed.
             </div>
-            <form method="post">
+            <form method="post" action="/hydra/login?login_challenge=${challenge}">
                 <input name="email" type="email" placeholder="Enter your email address" required />
-                <input type="hidden" name="challenge" value="${challenge}" />
                 <button type="submit">Login</button>
             </form>
         </body>
@@ -101,14 +111,15 @@ router.get('/login', async(req, res) => {
  * POST /hydra/login
  */
 router.post('/login', async(req, res) => {
-    const { email, challenge } = req.body;
+    const login_challenge = req.query.login_challenge;
+    const { email } = req.body;
 
-    if (!email || !challenge) {
-        logWithTimestamp('ERROR', 'Missing email or challenge in login submission');
-        return res.status(400).send('Missing required fields');
+    if (!login_challenge || !email) {
+        logWithTimestamp('ERROR', 'Missing login_challenge or email in login submission');
+        return res.status(400).send('Missing required parameters');
     }
 
-    logWithTimestamp('INFO', `Login attempt for email: ${email}`);
+    logWithTimestamp('INFO', `Login attempt for email: ${email} with challenge: ${login_challenge}`);
 
     // Validate email domain
     if (!email.endsWith(ALLOWED_EMAIL_DOMAIN)) {
@@ -117,81 +128,166 @@ router.post('/login', async(req, res) => {
             <h2>Access Denied</h2>
             <p>Only email addresses ending with <strong>${ALLOWED_EMAIL_DOMAIN}</strong> are allowed access.</p>
             <p>Your email: <strong>${email}</strong></p>
-            <a href="/hydra/login?login_challenge=${challenge}">← Go back</a>
+            <a href="/hydra/login?login_challenge=${login_challenge}">← Go back</a>
         `);
     }
 
     try {
-        // Accept the login request with Hydra
-        const acceptResponse = await axios.put(
-            `${HYDRA_ADMIN_URL}/oauth2/auth/requests/login/accept?login_challenge=${challenge}`, {
+        // Accept the login request with Hydra Admin API
+        logWithTimestamp('DEBUG', `Accepting login challenge: ${login_challenge} for user: ${email}`);
+        const { data } = await axios.post(
+            `${HYDRA_ADMIN_URL}/admin/oauth2/auth/requests/login/accept?login_challenge=${login_challenge}`, {
                 subject: email,
-                remember: false,
-                remember_for: 0,
-                acr: '1'
+                remember: false
             }
         );
 
         logWithTimestamp('SUCCESS', `Login accepted for user: ${email}`);
+        logWithTimestamp('DEBUG', `Redirecting to: ${data.redirect_to}`);
 
         // Redirect to the URL provided by Hydra
-        res.redirect(acceptResponse.data.redirect_to);
+        return res.redirect(302, data.redirect_to);
     } catch (error) {
         logWithTimestamp('ERROR', 'Failed to accept login with Hydra:', error.message);
+        if (error.response) {
+            logWithTimestamp('ERROR', 'Hydra Admin API error response:', {
+                status: error.response.status,
+                data: error.response.data
+            });
+        }
         res.status(500).send('Authentication system error');
     }
 });
 
 /**
- * Consent Challenge Handler - auto-accepts for trusted domain
+ * Consent Challenge Handler - shows consent form for user approval
  * GET /hydra/consent?consent_challenge=<challenge>
  */
 router.get('/consent', async(req, res) => {
-    const challenge = req.query.consent_challenge;
+            const challenge = req.query.consent_challenge;
 
-    if (!challenge) {
-        logWithTimestamp('ERROR', 'Missing consent_challenge parameter');
+            if (!challenge) {
+                logWithTimestamp('ERROR', 'Missing consent_challenge parameter');
+                return res.status(400).send('Missing consent_challenge parameter');
+            }
+
+            logWithTimestamp('INFO', `Handling consent challenge: ${challenge}`);
+
+            try {
+                // 🔑 Set consent CSRF cookie before any other processing
+                setCsrfCookie(res, 'hydra_consent_csrf', challenge);
+
+                // Get consent request information from Hydra
+                const consentRequest = await axios.get(
+                    `${HYDRA_ADMIN_URL}/oauth2/auth/requests/consent?consent_challenge=${challenge}`
+                );
+
+                const { requested_scope, subject, client } = consentRequest.data;
+                logWithTimestamp('DEBUG', `Consent request for user: ${subject}, scopes: ${requested_scope?.join(', ')}`);
+
+                // Show consent form
+                const consentForm = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Grant Access - MCP Git Gateway</title>
+            <style>
+                body { font-family: Arial, sans-serif; max-width: 400px; margin: 100px auto; padding: 20px; }
+                form { background: #f5f5f5; padding: 20px; border-radius: 8px; }
+                button { padding: 12px 20px; border: none; border-radius: 4px; cursor: pointer; margin: 5px; }
+                .accept { background: #28a745; color: white; }
+                .accept:hover { background: #218838; }
+                .deny { background: #dc3545; color: white; }
+                .deny:hover { background: #c82333; }
+                .info { background: #e7f3ff; padding: 10px; border-radius: 4px; margin-bottom: 20px; }
+                .scopes { background: #fff3cd; padding: 10px; border-radius: 4px; margin: 15px 0; }
+            </style>
+        </head>
+        <body>
+            <h2>🔐 Grant Access</h2>
+            <div class="info">
+                <strong>${client?.client_name || 'Application'}</strong> is requesting access to your account.
+                <br><strong>User:</strong> ${subject}
+            </div>
+            <div class="scopes">
+                <strong>Requested permissions:</strong>
+                <ul>
+                    ${requested_scope?.map(scope => 
+                        `<li><strong>${scope}</strong>: ${getScopeDescription(scope)}</li>`
+                    ).join('') || '<li>Basic access</li>'}
+                </ul>
+            </div>
+            <form method="post" action="/hydra/consent?consent_challenge=${challenge}">
+                <button name="submit" value="accept" type="submit" class="accept">Allow Access</button>
+                <button name="submit" value="deny" type="submit" class="deny">Deny</button>
+            </form>
+        </body>
+        </html>
+        `;
+
+        res.send(consentForm);
+    } catch (error) {
+        logWithTimestamp('ERROR', 'Failed to get consent request from Hydra:', error.message);
+        if (error.response) {
+            logWithTimestamp('ERROR', 'Hydra Admin API error response:', {
+                status: error.response.status,
+                data: error.response.data
+            });
+        }
+        res.status(500).send('Authentication system error');
+    }
+});
+
+/**
+ * Consent Form Submission Handler
+ * POST /hydra/consent
+ */
+router.post('/consent', async(req, res) => {
+    const consent_challenge = req.query.consent_challenge;
+    const { submit } = req.body;
+
+    if (!consent_challenge) {
+        logWithTimestamp('ERROR', 'Missing consent_challenge in consent submission');
         return res.status(400).send('Missing consent_challenge parameter');
     }
 
-    logWithTimestamp('INFO', `Handling consent challenge: ${challenge}`);
+    logWithTimestamp('INFO', `Consent ${submit} for challenge: ${consent_challenge}`);
 
     try {
-        // 🔑 Set consent CSRF cookie before any other processing
-        setCsrfCookie(res, 'hydra_consent_csrf', challenge);
-
-        // Get consent request information from Hydra
-        const consentRequest = await axios.get(
-            `${HYDRA_ADMIN_URL}/oauth2/auth/requests/consent?consent_challenge=${challenge}`
-        );
-
-        const { requested_scope, subject } = consentRequest.data;
-        logWithTimestamp('DEBUG', `Consent request for user: ${subject}, scopes: ${requested_scope?.join(', ')}`);
-
-        // Auto-accept consent for users in our trusted domain
-        const acceptResponse = await axios.put(
-            `${HYDRA_ADMIN_URL}/oauth2/auth/requests/consent/accept?consent_challenge=${challenge}`, {
-                grant_scope: requested_scope,
-                remember: false,
-                remember_for: 0,
-                session: {
-                    id_token: {
-                        email: subject,
-                        email_verified: true
-                    },
-                    access_token: {
-                        email: subject
-                    }
+        if (submit === 'accept') {
+            // Accept consent with Hydra Admin API
+            logWithTimestamp('DEBUG', `Accepting consent challenge: ${consent_challenge}`);
+            const { data } = await axios.post(
+                `${HYDRA_ADMIN_URL}/admin/oauth2/auth/requests/consent/accept?consent_challenge=${consent_challenge}`, {
+                    grant_scope: ['openid', 'profile', 'email'],
+                    remember: false
                 }
-            }
-        );
+            );
 
-        logWithTimestamp('SUCCESS', `Consent granted for user: ${subject}`);
+            logWithTimestamp('SUCCESS', `Consent granted for challenge: ${consent_challenge}`);
+            logWithTimestamp('DEBUG', `Redirecting to: ${data.redirect_to}`);
 
-        // Redirect to the URL provided by Hydra
-        res.redirect(acceptResponse.data.redirect_to);
+            return res.redirect(302, data.redirect_to);
+        } else {
+            // Deny consent
+            logWithTimestamp('WARN', `Consent denied for challenge: ${consent_challenge}`);
+            const { data } = await axios.post(
+                `${HYDRA_ADMIN_URL}/admin/oauth2/auth/requests/consent/reject?consent_challenge=${consent_challenge}`, {
+                    error: 'access_denied',
+                    error_description: 'User denied access'
+                }
+            );
+
+            return res.redirect(302, data.redirect_to);
+        }
     } catch (error) {
         logWithTimestamp('ERROR', 'Failed to handle consent with Hydra:', error.message);
+        if (error.response) {
+            logWithTimestamp('ERROR', 'Hydra Admin API error response:', {
+                status: error.response.status,
+                data: error.response.data
+            });
+        }
         res.status(500).send('Authentication system error');
     }
 });
