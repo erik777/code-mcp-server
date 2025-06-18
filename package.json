@@ -20,6 +20,7 @@
         "express-session": "^1.17.3",
         "node-fetch": "^3.3.2",
         "simple-git": "^3.22.0",
+        "winston": "^3.17.0",
         "zod": "^3.25.65"
     },
     "devDependencies": {

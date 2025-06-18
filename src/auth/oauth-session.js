@@ -3,6 +3,7 @@
 // Includes OAuth login/callback/logout routes and session-based auth
 
 const axios = require("axios");
+const logger = require("../logger");
 const crypto = require("crypto");
 const session = require("express-session");
 
@@ -14,7 +15,7 @@ const session = require("express-session");
  */
 async function validateUser(token, config) {
     try {
-        console.log(`[OAUTH-SESSION] Validating OAuth token for provider: ${config.provider}...`);
+        logger.info(`[OAUTH-SESSION] Validating OAuth token for provider: ${config.provider}...`);
 
         // Get user info from the configured OAuth provider
         const response = await axios.get(config.userInfoUrl, {
@@ -27,18 +28,18 @@ async function validateUser(token, config) {
         const email = userInfo.email;
         const name = userInfo.name || userInfo.preferred_username || userInfo.sub || "Unknown User";
 
-        console.log(`[OAUTH-SESSION] OAuth user: ${name} (${email}) via ${config.provider}`);
+        logger.info(`[OAUTH-SESSION] OAuth user: ${name} (${email}) via ${config.provider}`);
 
         // Check if email ends with allowed domain
         if (email && email.endsWith(config.allowedDomain)) {
-            console.log(`[OAUTH-SESSION] User ${email} authorized (allowed domain: ${config.allowedDomain})`);
+            logger.info(`[OAUTH-SESSION] User ${email} authorized (allowed domain: ${config.allowedDomain})`);
             return true;
         } else {
-            console.log(`[OAUTH-SESSION] User ${email} not authorized (required domain: ${config.allowedDomain})`);
+            logger.warn(`[OAUTH-SESSION] User ${email} not authorized (required domain: ${config.allowedDomain})`);
             return false;
         }
     } catch (error) {
-        console.error(`[OAUTH-SESSION] Error validating OAuth token for ${config.provider}:`, error.message);
+        logger.error(`[OAUTH-SESSION] Error validating OAuth token for ${config.provider}`, { error: error.message });
         return false;
     }
 }
@@ -51,7 +52,7 @@ async function validateUser(token, config) {
  */
 function createSessionAuth(config) {
     return async(req, res, next) => {
-        console.log("[OAUTH-SESSION] Authorization check initiated");
+        logger.info("[OAUTH-SESSION] Authorization check initiated");
 
         // 1. Detect token sources
         const bearerHeader = req.headers.authorization || req.headers.Authorization;
@@ -60,7 +61,7 @@ function createSessionAuth(config) {
         const sessionToken = req.session && req.session.accessToken;
         const token = bearerToken || sessionToken; // prefer explicit Bearer
 
-        console.log(`[OAUTH-SESSION] Auth sources → bearer=${!!bearerToken}, session=${!!sessionToken}`);
+        logger.debug(`[OAUTH-SESSION] Auth sources → bearer=${!!bearerToken}, session=${!!sessionToken}`);
 
         // 2. No token at all → 401
         if (!token) {
@@ -84,7 +85,7 @@ function createSessionAuth(config) {
             req.mcpUserToken = token;
             next();
         } catch (err) {
-            console.error("[OAUTH-SESSION] Authorization error:", err.message);
+            logger.error("[OAUTH-SESSION] Authorization error", { error: err.message });
             return res.status(500).json({
                 error: "Authorization check failed",
                 message: err.message,
@@ -117,11 +118,11 @@ function createSessionMiddleware(sessionSecret) {
  * @param {Object} config - OAuth configuration
  */
 function setupOAuthRoutes(app, config) {
-    console.log("[OAUTH-SESSION] Setting up OAuth routes...");
+    logger.info("[OAUTH-SESSION] Setting up OAuth routes...");
 
     // OAuth initiation endpoint
     app.get("/oauth/login", (req, res) => {
-        console.log(`[OAUTH-SESSION] OAuth login initiated with provider: ${config.provider}`);
+        logger.info(`[OAUTH-SESSION] OAuth login initiated with provider: ${config.provider}`);
 
         // Generate state parameter for CSRF protection
         const state = crypto.randomBytes(32).toString("hex");
@@ -134,35 +135,35 @@ function setupOAuthRoutes(app, config) {
         authUrl.searchParams.set("scope", config.scopes.join(" "));
         authUrl.searchParams.set("state", state);
 
-        console.log(`[OAUTH-SESSION] Redirecting to ${config.provider} OAuth: ${authUrl.toString()}`);
+        logger.info(`[OAUTH-SESSION] Redirecting to ${config.provider} OAuth: ${authUrl.toString()}`);
         res.redirect(authUrl.toString());
     });
 
     // OAuth callback endpoint
     app.get("/oauth/callback", async(req, res) => {
-        console.log("[OAUTH-SESSION] Processing OAuth callback");
-        console.log("[OAUTH-SESSION] OAuth callback query params:", req.query);
+        logger.info("[OAUTH-SESSION] Processing OAuth callback");
+        logger.info("[OAUTH-SESSION] OAuth callback query params:", req.query);
 
         const { code, state, error } = req.query;
 
         if (error) {
-            console.error("[OAUTH-SESSION] OAuth error:", error);
+            logger.error("[OAUTH-SESSION] OAuth error:", error);
             return res.status(400).json({ error: `OAuth error: ${error}` });
         }
 
         if (!code) {
-            console.error("[OAUTH-SESSION] No authorization code received in OAuth callback");
+            logger.error("[OAUTH-SESSION] No authorization code received in OAuth callback");
             return res.status(400).json({ error: "No authorization code received" });
         }
 
         if (state !== req.session.oauthState) {
-            console.error(`[OAUTH-SESSION] Invalid OAuth state parameter. Expected: ${req.session.oauthState}, Got: ${state}`);
+            logger.error(`[OAUTH-SESSION] Invalid OAuth state parameter. Expected: ${req.session.oauthState}, Got: ${state}`);
             return res.status(400).json({ error: "Invalid state parameter" });
         }
 
         try {
             // Exchange code for token
-            console.log(`[OAUTH-SESSION] Exchanging authorization code for access token with ${config.provider}`);
+            logger.info(`[OAUTH-SESSION] Exchanging authorization code for access token with ${config.provider}`);
             const tokenResponse = await axios.post(config.tokenUrl, {
                 client_id: config.clientId,
                 client_secret: config.clientSecret,
@@ -172,7 +173,7 @@ function setupOAuthRoutes(app, config) {
             });
 
             const { access_token } = tokenResponse.data;
-            console.log("[OAUTH-SESSION] Successfully obtained access token");
+            logger.info("[OAUTH-SESSION] Successfully obtained access token");
 
             // Validate user
             const isAuthorized = await validateUser(access_token, config);
@@ -180,22 +181,22 @@ function setupOAuthRoutes(app, config) {
             if (isAuthorized) {
                 // Store token in session
                 req.session.accessToken = access_token;
-                console.log("[OAUTH-SESSION] OAuth authentication successful and user authorized");
+                logger.info("[OAUTH-SESSION] OAuth authentication successful and user authorized");
                 res.json({
                     success: true,
                     message: "Authentication successful! You can now access the MCP endpoint.",
                     redirect: "/mcp",
                 });
             } else {
-                console.log("[OAUTH-SESSION] User not authorized for this service");
+                logger.info("[OAUTH-SESSION] User not authorized for this service");
                 res.status(403).json({
                     error: `Access denied. Only users with ${config.allowedDomain} email addresses are allowed.`,
                 });
             }
         } catch (error) {
-            console.error("[OAUTH-SESSION] Error during OAuth callback:", error.message);
+            logger.error("[OAUTH-SESSION] Error during OAuth callback:", error.message);
             if (error.response) {
-                console.error("[OAUTH-SESSION] OAuth API response error:", {
+                logger.error("[OAUTH-SESSION] OAuth API response error:", {
                     status: error.response.status,
                     data: error.response.data,
                 });
@@ -206,23 +207,23 @@ function setupOAuthRoutes(app, config) {
 
     // OAuth logout endpoint
     app.get("/oauth/logout", (req, res) => {
-        console.log("[OAUTH-SESSION] User logging out");
+        logger.info("[OAUTH-SESSION] User logging out");
         req.session.destroy();
         res.json({ success: true, message: "Logged out successfully" });
     });
 
     // OAuth status endpoint
     app.get("/oauth/status", async(req, res) => {
-        console.log("[OAUTH-SESSION] OAuth status check requested");
+        logger.info("[OAUTH-SESSION] OAuth status check requested");
 
         if (req.session.accessToken) {
             try {
                 const isValid = await validateUser(req.session.accessToken, config);
                 if (isValid) {
-                    console.log("[OAUTH-SESSION] User authentication status: valid");
+                    logger.info("[OAUTH-SESSION] User authentication status: valid");
                     res.json({ authenticated: true, message: "User is authenticated" });
                 } else {
-                    console.log("[OAUTH-SESSION] User authentication status: invalid, destroying session");
+                    logger.info("[OAUTH-SESSION] User authentication status: invalid, destroying session");
                     req.session.destroy();
                     res.json({
                         authenticated: false,
@@ -230,7 +231,7 @@ function setupOAuthRoutes(app, config) {
                     });
                 }
             } catch (error) {
-                console.error("[OAUTH-SESSION] Authentication check failed:", error.message);
+                logger.error("[OAUTH-SESSION] Authentication check failed:", error.message);
                 req.session.destroy();
                 res.json({
                     authenticated: false,
@@ -238,14 +239,14 @@ function setupOAuthRoutes(app, config) {
                 });
             }
         } else {
-            console.log("[OAUTH-SESSION] User authentication status: not authenticated");
+            logger.info("[OAUTH-SESSION] User authentication status: not authenticated");
             res.json({ authenticated: false, message: "User not authenticated" });
         }
     });
 
     // OAuth registration endpoint for dynamic client registration
     app.post("/oauth/register", (req, res) => {
-        console.log("[OAUTH-SESSION] Dynamic client registration requested");
+        logger.info("[OAUTH-SESSION] Dynamic client registration requested");
 
         if (config.provider !== "hydra") {
             return res.status(400).json({
@@ -261,11 +262,11 @@ function setupOAuthRoutes(app, config) {
             scopes: config.scopes,
         };
 
-        console.log("[OAUTH-SESSION] Dynamic registration response:", registrationResponse);
+        logger.info("[OAUTH-SESSION] Dynamic registration response:", registrationResponse);
         return res.json(registrationResponse);
     });
 
-    console.log("[OAUTH-SESSION] OAuth routes configured successfully");
+    logger.info("[OAUTH-SESSION] OAuth routes configured successfully");
 }
 
 module.exports = {

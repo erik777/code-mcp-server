@@ -7,6 +7,7 @@ const simpleGit = require("simple-git");
 const fs = require("fs");
 const path = require("path");
 const axios = require("axios");
+const logger = require("../logger");
 
 // Import authentication modules
 const { createBearerAuth } = require("../auth/bearer-only");
@@ -18,9 +19,9 @@ const PORT = process.env.PORT || 3131;
 const BASE_URL = process.env.BASE_URL;
 const EFFECTIVE_BASE_URL = BASE_URL || `http://localhost:${PORT}`;
 
-console.log("[SIMPLE-AUTH] Starting Mode 2: Simple MCP Server + OAuth (Bearer-only)");
-console.log("[SIMPLE-AUTH] 🎯 EXPERIMENTAL: Testing Bearer-only auth with ChatGPT Deep Research");
-console.log("[SIMPLE-AUTH] 📋 Features: MCP Tools + Bearer token validation (no OAuth flows)");
+logger.info("[SIMPLE-AUTH] Starting Mode 2: Simple MCP Server + OAuth (Bearer-only)");
+logger.info("[SIMPLE-AUTH] 🎯 EXPERIMENTAL: Testing Bearer-only auth with ChatGPT Deep Research");
+logger.info("[SIMPLE-AUTH] 📋 Features: MCP Tools + Bearer token validation (no OAuth flows)");
 
 // Parse OAuth configuration
 let oauthConfig;
@@ -29,23 +30,11 @@ try {
     validateOAuthConfig(oauthConfig);
     logOAuthConfig(oauthConfig);
 } catch (error) {
-    console.error("[SIMPLE-AUTH] ❌ OAuth configuration error:", error.message);
+    logger.error("[SIMPLE-AUTH] ❌ OAuth configuration error:", error.message);
     process.exit(1);
 }
 
 // Utility functions (same as simple.js)
-function logWithTimestamp(level, message, ...args) {
-    const timestamp = new Date().toISOString();
-    const logLevels = {
-        DEBUG: "🔍",
-        INFO: "ℹ️",
-        SUCCESS: "✅",
-        WARN: "⚠️",
-        ERROR: "❌",
-    };
-    const icon = logLevels[level] || "📝";
-    console.log(`${timestamp} ${icon} [${level}] ${message}`, ...args);
-}
 
 function walkDirectory(dir) {
     const files = [];
@@ -71,7 +60,7 @@ function walkDirectory(dir) {
         walk(dir);
         return files;
     } catch (error) {
-        logWithTimestamp("ERROR", "Error walking directory:", error);
+        logger.error("Error walking directory:", error);
         return [];
     }
 }
@@ -79,7 +68,7 @@ function walkDirectory(dir) {
 // File operations (same as simple.js)
 async function handleFileRead(args) {
     try {
-        logWithTimestamp("INFO", `File read request: ${args.id}`);
+        logger.info(`File read request: ${args.id}`);
 
         const filePath = path.join(REPO_PATH, args.id);
 
@@ -94,7 +83,7 @@ async function handleFileRead(args) {
         const content = fs.readFileSync(filePath, "utf8");
         const stats = fs.statSync(filePath);
 
-        logWithTimestamp("SUCCESS", `File read successful: ${args.id} (${content.length} chars)`);
+        logger.info(`File read successful: ${args.id} (${content.length} chars)`);
 
         return {
             id: args.id,
@@ -108,14 +97,14 @@ async function handleFileRead(args) {
             },
         };
     } catch (error) {
-        logWithTimestamp("ERROR", `File read failed for ${args.id}:`, error.message);
+        logger.error(`File read failed for ${args.id}:`, error.message);
         throw error;
     }
 }
 
 async function handleFileSearch(args) {
     try {
-        logWithTimestamp("INFO", `File search request: "${args.query}"`);
+        logger.info(`File search request: "${args.query}"`);
 
         const searchTerm = args.query.toLowerCase();
         const allFiles = walkDirectory(REPO_PATH);
@@ -156,7 +145,7 @@ async function handleFileSearch(args) {
                 processedFiles++;
             } catch (error) {
                 if (error.code !== "EISDIR" && !error.message.includes("ENOENT")) {
-                    logWithTimestamp("WARN", `Skipping file ${file}:`, error.message);
+                    logger.warn(`Skipping file ${file}:`, error.message);
                 }
             }
         }
@@ -169,14 +158,13 @@ async function handleFileSearch(args) {
 
         const limitedResults = results.slice(0, 50);
 
-        logWithTimestamp(
-            "SUCCESS",
+        logger.info(
             `Search completed: "${args.query}" → ${limitedResults.length} results (processed ${processedFiles} files)`
         );
 
         return { results: limitedResults };
     } catch (error) {
-        logWithTimestamp("ERROR", `Search failed for "${args.query}":`, error.message);
+        logger.error(`Search failed for "${args.query}":`, error.message);
         throw error;
     }
 
@@ -208,14 +196,14 @@ async function handleFileSearch(args) {
 async function handleMCPRequest(req, res) {
     const { id, method, params } = req.body;
 
-    logWithTimestamp("DEBUG", `🚀 === ${method.toUpperCase()} METHOD ===`);
+    logger.debug(`🚀 === ${method.toUpperCase()} METHOD ===`);
 
     try {
         let result;
 
         switch (method) {
             case "initialize":
-                logWithTimestamp("INFO", "Client requesting server capabilities");
+                logger.info("Client requesting server capabilities");
                 result = {
                     protocolVersion: "2024-11-05",
                     capabilities: { tools: {} },
@@ -225,7 +213,7 @@ async function handleMCPRequest(req, res) {
                 break;
 
             case "tools/list":
-                logWithTimestamp("INFO", "Client requesting available tools");
+                logger.info("Client requesting available tools");
                 result = {
                     tools: [{
                             name: "search",
@@ -285,7 +273,7 @@ async function handleMCPRequest(req, res) {
 
             case "tools/call":
                 const { name, arguments: toolArgs } = params;
-                logWithTimestamp("INFO", `Tool '${name}' called with args: ${JSON.stringify(toolArgs)}`);
+                logger.info(`Tool '${name}' called with args: ${JSON.stringify(toolArgs)}`);
 
                 if (name === "search") {
                     const searchResult = await handleFileSearch(toolArgs);
@@ -303,12 +291,12 @@ async function handleMCPRequest(req, res) {
         }
 
         const response = { jsonrpc: "2.0", id, result };
-        logWithTimestamp("SUCCESS", `📤 === OUTGOING MCP RESPONSE ===`);
-        logWithTimestamp("DEBUG", `Response: ${JSON.stringify(response)}`);
+        logger.info(`📤 === OUTGOING MCP RESPONSE ===`);
+        logger.debug(`Response: ${JSON.stringify(response)}`);
         res.json(response);
 
     } catch (error) {
-        logWithTimestamp("ERROR", `❌ ${method} error: ${error.message}`);
+        logger.error(`❌ ${method} error: ${error.message}`);
         const errorResponse = {
             jsonrpc: "2.0",
             id,
@@ -323,8 +311,8 @@ async function handleMCPNotification(req, res) {
     const { method } = req.body;
 
     if (method === "notifications/initialized") {
-        logWithTimestamp("SUCCESS", "🎉 === INITIALIZED NOTIFICATION ===");
-        logWithTimestamp("INFO", "Client has completed initialization and is ready for normal operations");
+        logger.info("🎉 === INITIALIZED NOTIFICATION ===");
+        logger.info("Client has completed initialization and is ready for normal operations");
     }
 
     res.status(200).end(); // Notifications don't require responses
@@ -333,23 +321,23 @@ async function handleMCPNotification(req, res) {
 // Start function for mode system
 async function start({ enableAuth = true }) {
     try {
-        console.log("[SIMPLE-AUTH] 🚀 Starting MCP Git Gateway Server (Bearer-only OAuth)");
-        console.log(`[SIMPLE-AUTH] 📂 Repository path: ${REPO_PATH}`);
-        console.log(`[SIMPLE-AUTH] 🌐 Port: ${PORT}`);
+        logger.info("[SIMPLE-AUTH] 🚀 Starting MCP Git Gateway Server (Bearer-only OAuth)");
+        logger.info(`[SIMPLE-AUTH] 📂 Repository path: ${REPO_PATH}`);
+        logger.info(`[SIMPLE-AUTH] 🌐 Port: ${PORT}`);
 
         // Create Express app
         const app = express();
         app.use(express.json());
 
-        console.log("[SIMPLE-AUTH] 📨 === MCP REQUEST LOGGING ===");
+        logger.info("[SIMPLE-AUTH] 📨 === MCP REQUEST LOGGING ===");
 
         // Request logging middleware
         app.use((req, res, next) => {
             if (req.path === "/mcp") {
-                console.log("📨 === INCOMING MCP REQUEST ===");
-                console.log(`Method: ${req.method}`);
-                console.log(`Content-Type: ${req.get("content-type")}`);
-                console.log(`Body: ${JSON.stringify(req.body)}`);
+                logger.info("📨 === INCOMING MCP REQUEST ===");
+                logger.info(`Method: ${req.method}`);
+                logger.info(`Content-Type: ${req.get("content-type")}`);
+                logger.info(`Body: ${JSON.stringify(req.body)}`);
             }
             next();
         });
@@ -358,8 +346,8 @@ async function start({ enableAuth = true }) {
         const originalSend = app.response.send;
         app.response.send = function(body) {
             if (this.req.path === "/mcp") {
-                console.log("📤 === OUTGOING MCP RESPONSE ===");
-                console.log(`Response: ${body}`);
+                logger.info("📤 === OUTGOING MCP RESPONSE ===");
+                logger.info(`Response: ${body}`);
             }
             return originalSend.call(this, body);
         };
@@ -369,7 +357,7 @@ async function start({ enableAuth = true }) {
 
         // Health check endpoint (no auth required)
         app.get("/health", (req, res) => {
-            logWithTimestamp("DEBUG", "Health check requested");
+            logger.debug("Health check requested");
             res.json({
                 status: "ok",
                 server: "MCP Git Gateway (Simple + Bearer Auth)",
@@ -388,7 +376,7 @@ async function start({ enableAuth = true }) {
 
         // MCP endpoint with Bearer authentication
         app.post("/mcp", bearerAuth, async(req, res) => {
-            logWithTimestamp("INFO", "📨 MCP POST request received");
+            logger.info("📨 MCP POST request received");
 
             // Handle notifications differently (they don't expect responses)
             if (req.body.method && req.body.method.startsWith("notifications/")) {
@@ -423,17 +411,17 @@ async function start({ enableAuth = true }) {
 
         // Start the server
         app.listen(PORT, () => {
-            console.log("[SIMPLE-AUTH] 🎉 MCP Git Gateway Server started successfully");
-            console.log(`[SIMPLE-AUTH] 📡 Server is listening on http://localhost:${PORT}`);
-            console.log(`[SIMPLE-AUTH] 🔗 MCP endpoint: http://localhost:${PORT}/mcp`);
-            console.log(`[SIMPLE-AUTH] 💊 Health check: http://localhost:${PORT}/health`);
-            console.log("[SIMPLE-AUTH] 🔐 Authentication: Bearer token required");
-            console.log(`[SIMPLE-AUTH] 🎯 Provider: ${oauthConfig.provider} (${oauthConfig.allowedDomain})`);
-            console.log("[SIMPLE-AUTH] ⚠️  No OAuth flows - supply Bearer token directly in Authorization header");
+            logger.info("[SIMPLE-AUTH] 🎉 MCP Git Gateway Server started successfully");
+            logger.info(`[SIMPLE-AUTH] 📡 Server is listening on http://localhost:${PORT}`);
+            logger.info(`[SIMPLE-AUTH] 🔗 MCP endpoint: http://localhost:${PORT}/mcp`);
+            logger.info(`[SIMPLE-AUTH] 💊 Health check: http://localhost:${PORT}/health`);
+            logger.info("[SIMPLE-AUTH] 🔐 Authentication: Bearer token required");
+            logger.info(`[SIMPLE-AUTH] 🎯 Provider: ${oauthConfig.provider} (${oauthConfig.allowedDomain})`);
+            logger.info("[SIMPLE-AUTH] ⚠️  No OAuth flows - supply Bearer token directly in Authorization header");
         });
 
     } catch (error) {
-        console.error("[SIMPLE-AUTH] ❌ Failed to start server:", error);
+        logger.error("[SIMPLE-AUTH] ❌ Failed to start server:", error);
         process.exit(1);
     }
 }

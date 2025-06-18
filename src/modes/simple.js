@@ -4,7 +4,8 @@
 
 function start({ enableAuth = false }) {
     // Mode 1 always ignores enableAuth - this mode never has authentication
-    console.log(`[SIMPLE] Starting simple MCP server (no auth)`);
+    const logger = require("../logger");
+    logger.info(`[SIMPLE] Starting simple MCP server (no auth)`);
 
     const express = require("express");
 
@@ -21,13 +22,13 @@ function start({ enableAuth = false }) {
     const REPO_PATH = process.env.REPO_PATH || path.resolve(__dirname, "../../repo");
     const git = simpleGit(REPO_PATH);
 
-    console.log("🚀 Starting MCP Git Gateway Server");
-    console.log(`📂 Repository path: ${REPO_PATH}`);
-    console.log(`🌐 Port: ${PORT}`);
+    logger.info("🚀 Starting MCP Git Gateway Server");
+    logger.info(`📂 Repository path: ${REPO_PATH}`);
+    logger.info(`🌐 Port: ${PORT}`);
 
     // Ensure repo exists
     if (!fs.existsSync(REPO_PATH)) {
-        console.error(
+        logger.error(
             `❌ ERROR: Missing repo at ${REPO_PATH}. Please set REPO_PATH environment variable.`
         );
         process.exit(1);
@@ -79,7 +80,7 @@ function start({ enableAuth = false }) {
                 }
             } catch (error) {
                 // Log warning but continue processing other directories
-                console.warn(
+                logger.warn(
                     `⚠️  Could not read directory ${currentDir}: ${error.message}`
                 );
             }
@@ -135,7 +136,7 @@ function start({ enableAuth = false }) {
         }
 
         const content = fs.readFileSync(fullPath, "utf8");
-        console.log(
+        logger.info(
             `📖 Fetched resource: ${filePath} (${content.length} characters)`
         );
 
@@ -203,7 +204,7 @@ function start({ enableAuth = false }) {
       throw new Error("Search query is required - please provide text to search for in files");
     }
 
-    console.log(`🔍 Search query: "${query}"`);
+    logger.info(`🔍 Search query: "${query}"`);
 
     const allFiles = walkDirectory(REPO_PATH);
     const results = [];
@@ -305,7 +306,7 @@ function start({ enableAuth = false }) {
     // Remove priority field from final results (internal use only)
     const finalResults = limitedResults.map(({ priority, matchType, ...result }) => result);
 
-    console.log(`📋 Found ${finalResults.length} results for "${query}"`);
+    logger.info(`📋 Found ${finalResults.length} results for "${query}"`);
 
     return {
       content: [
@@ -345,17 +346,17 @@ function start({ enableAuth = false }) {
   // MCP endpoint - handle JSON-RPC requests
   app.post("/mcp", async (req, res) => {
     try {
-      console.log("📨 === INCOMING MCP REQUEST ===");
-      console.log(`Method: ${req.method}`);
-      console.log(`Content-Type: ${req.headers["content-type"]}`);
-      console.log(`Body:`, JSON.stringify(req.body, null, 2));
+      logger.info("📨 === INCOMING MCP REQUEST ===");
+      logger.info(`Method: ${req.method}`);
+      logger.info(`Content-Type: ${req.headers["content-type"]}`);
+      logger.info(`Body:`, JSON.stringify(req.body, null, 2));
 
       const { jsonrpc, id, method, params } = req.body;
       let response;
 
       if (method === "initialize") {
-        console.log("🚀 === INITIALIZATION METHOD ===");
-        console.log("Client requesting server capabilities");
+        logger.info("🚀 === INITIALIZATION METHOD ===");
+        logger.info("Client requesting server capabilities");
         response = {
           jsonrpc: "2.0",
           id,
@@ -372,8 +373,8 @@ function start({ enableAuth = false }) {
           },
         };
       } else if (method === "tools/list") {
-        console.log("🛠️ === TOOLS/LIST METHOD ===");
-        console.log("Client requesting available tools");
+        logger.info("🛠️ === TOOLS/LIST METHOD ===");
+        logger.info("Client requesting available tools");
         response = {
           jsonrpc: "2.0",
           id,
@@ -471,16 +472,16 @@ function start({ enableAuth = false }) {
           },
         };
       } else if (method === "notifications/initialized") {
-        console.log("🎉 === INITIALIZED NOTIFICATION ===");
-        console.log("Client has completed initialization and is ready for normal operations");
+        logger.info("🎉 === INITIALIZED NOTIFICATION ===");
+        logger.info("Client has completed initialization and is ready for normal operations");
         // Notifications don't expect a JSON-RPC response, just HTTP 200
         res.status(200).send();
         return;
       } else if (method === "tools/call") {
-        console.log("⚡ === TOOLS/CALL METHOD ===");
+        logger.info("⚡ === TOOLS/CALL METHOD ===");
         const { name, arguments: args } = params;
-        console.log(`🎯 Tool: ${name}`);
-        console.log(`📦 Arguments:`, JSON.stringify(args, null, 2));
+        logger.info(`🎯 Tool: ${name}`);
+        logger.info(`📦 Arguments:`, JSON.stringify(args, null, 2));
 
         try {
           if (name === "fetch") {
@@ -508,7 +509,7 @@ function start({ enableAuth = false }) {
             };
           }
         } catch (toolError) {
-          console.error(`❌ Tool execution error for ${name}:`, toolError.message);
+          logger.error(`❌ Tool execution error for ${name}:`, toolError.message);
           response = {
             jsonrpc: "2.0",
             id,
@@ -523,8 +524,8 @@ function start({ enableAuth = false }) {
           };
         }
       } else {
-        console.log("❓ === UNKNOWN METHOD ===");
-        console.log(`🚨 UNHANDLED METHOD: "${method}"`);
+        logger.info("❓ === UNKNOWN METHOD ===");
+        logger.info(`🚨 UNHANDLED METHOD: "${method}"`);
         response = {
           jsonrpc: "2.0",
           id,
@@ -535,12 +536,12 @@ function start({ enableAuth = false }) {
         };
       }
 
-      console.log("📤 === OUTGOING MCP RESPONSE ===");
-      console.log(`Response:`, JSON.stringify(response, null, 2));
+      logger.info("📤 === OUTGOING MCP RESPONSE ===");
+      logger.info(`Response:`, JSON.stringify(response, null, 2));
 
       res.json(response);
     } catch (error) {
-      console.error("❌ Error handling MCP request:", error);
+      logger.error("❌ Error handling MCP request:", error);
       res.status(500).json({
         jsonrpc: "2.0",
         error: {
@@ -555,7 +556,7 @@ function start({ enableAuth = false }) {
 
   // Handle GET requests (optional SSE endpoint)
   app.get("/mcp", (req, res) => {
-    console.log("📡 GET request to /mcp - Server-to-client communication not implemented");
+    logger.info("📡 GET request to /mcp - Server-to-client communication not implemented");
     res.status(405).json({
       jsonrpc: "2.0",
       error: {
@@ -578,15 +579,15 @@ function start({ enableAuth = false }) {
 
   // Start the server
   app.listen(PORT, "0.0.0.0", () => {
-    console.log("🎉 MCP Git Gateway Server started successfully");
-    console.log(`📡 Server is listening on http://localhost:${PORT}`);
-    console.log(`🔗 MCP endpoint: http://localhost:${PORT}/mcp`);
-    console.log(`💊 Health check: http://localhost:${PORT}/health`);
+    logger.info("🎉 MCP Git Gateway Server started successfully");
+    logger.info(`📡 Server is listening on http://localhost:${PORT}`);
+    logger.info(`🔗 MCP endpoint: http://localhost:${PORT}/mcp`);
+    logger.info(`💊 Health check: http://localhost:${PORT}/health`);
   });
 
   // Handle graceful shutdown
   process.on("SIGINT", async () => {
-    console.log("\n🛑 Shutting down MCP server...");
+    logger.info("\n🛑 Shutting down MCP server...");
     process.exit(0);
   });
 }

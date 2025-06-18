@@ -6,6 +6,7 @@ require("dotenv").config({ path: ".env.test.local" });
 require("dotenv").config({ path: ".env.local" });
 require("dotenv").config({ path: ".env" });
 
+const logger = require("../logger");
 const { z } = require("zod");
 const fs = require("fs");
 const path = require("path");
@@ -100,54 +101,40 @@ switch (OAUTH_PROVIDER) {
         OAUTH_CLIENT_SECRET =
             process.env.OAUTH_CLIENT_SECRET || "your-client-secret";
         if (!OAUTH_AUTH_URL || !OAUTH_TOKEN_URL || !OAUTH_USERINFO_URL) {
-            console.error(
+            logger.error(
                 "❌ ERROR: Custom OAuth provider requires OAUTH_AUTH_URL, OAUTH_TOKEN_URL, and OAUTH_USERINFO_URL to be set"
             );
             process.exit(1);
         }
         break;
     default:
-        console.error(
+        logger.error(
             `❌ ERROR: Unsupported OAuth provider: ${OAUTH_PROVIDER}. Supported providers: hydra, google, custom`
         );
         process.exit(1);
 }
 
-console.log("🚀 Starting MCP Git Gateway Server with OAuth 2.0");
-console.log(`📂 Repository path: ${REPO_PATH}`);
-console.log(`🌐 Port: ${PORT}`);
-console.log(`🔧 OAuth Provider: ${OAUTH_PROVIDER}`);
-console.log(
+logger.info("🚀 Starting MCP Git Gateway Server with OAuth 2.0");
+logger.info(`📂 Repository path: ${REPO_PATH}`);
+logger.info(`🌐 Port: ${PORT}`);
+logger.info(`🔧 OAuth Provider: ${OAUTH_PROVIDER}`);
+logger.info(
     `🌐 Base URL: ${EFFECTIVE_BASE_URL} ${
     BASE_URL ? "(configured)" : "(fallback)"
   }`
 );
-console.log(`🔐 OAuth Redirect URI: ${REDIRECT_URI}`);
-console.log(`🔑 OAuth Client ID: ${OAUTH_CLIENT_ID}`);
+logger.info(`🔐 OAuth Redirect URI: ${REDIRECT_URI}`);
+logger.info(`🔑 OAuth Client ID: ${OAUTH_CLIENT_ID}`);
 
 // Ensure repo exists
 if (!fs.existsSync(REPO_PATH)) {
-    console.error(
+    logger.error(
         `❌ ERROR: Missing repo at ${REPO_PATH}. Please set REPO_PATH environment variable.`
     );
     process.exit(1);
 }
 
-// Utility function for timestamped logging
-function logWithTimestamp(level, message, ...args) {
-    const timestamp = new Date().toISOString();
-    const levelEmoji = {
-        DEBUG: "🔍",
-        INFO: "ℹ️",
-        WARN: "⚠️",
-        ERROR: "❌",
-        SUCCESS: "✅",
-    };
-    console.log(
-        `[${timestamp}] ${levelEmoji[level] || "📝"} ${message}`,
-        ...args
-    );
-}
+// Logging now handled by Winston logger
 
 /**
  * Recursively walks through a directory tree and returns all file paths.
@@ -229,10 +216,10 @@ function walkDirectory(dir) {
  */
 async function handleFileRead(args) {
     const { id } = args;
-    logWithTimestamp("DEBUG", `handleFileRead called with args:`, args);
+    logger.debug(`handleFileRead called with args:`, args);
 
     if (!id) {
-        logWithTimestamp("ERROR", `File ID is required - received args:`, args);
+        logger.error(`File ID is required - received args:`, args);
         throw new Error(
             "File ID is required - please provide the file path from search results"
         );
@@ -343,7 +330,7 @@ async function handleFileRead(args) {
  */
 async function handleFileSearch(args) {
   const { query } = args;
-  logWithTimestamp("DEBUG", `handleFileSearch called with args:`, args);
+  logger.debug( `handleFileSearch called with args:`, args);
 
   if (!query) {
     logWithTimestamp(
@@ -365,13 +352,13 @@ async function handleFileSearch(args) {
   }
 
   if (query.trim().length === 0) {
-    logWithTimestamp("ERROR", `Search query cannot be empty`);
+    logger.error( `Search query cannot be empty`);
     throw new Error(
       "Search query cannot be empty - please provide meaningful search text"
     );
   }
 
-  logWithTimestamp("INFO", `Enhanced search for: "${query}"`);
+  logger.info( `Enhanced search for: "${query}"`);
 
   const results = [];
   const files = walkDirectory(REPO_PATH);
@@ -456,7 +443,7 @@ async function handleFileSearch(args) {
     }
   }
 
-  logWithTimestamp("DEBUG", `Found ${contentMatches.length} content matches`);
+  logger.debug( `Found ${contentMatches.length} content matches`);
 
   // Helper function to create result entry
   /**
@@ -619,7 +606,7 @@ const server = new McpServer(
   }
 );
 
-logWithTimestamp("INFO", "MCP Server instance created");
+logger.info( "MCP Server instance created");
 
 // Register search tool
 server.tool(
@@ -633,7 +620,7 @@ server.tool(
       ),
   },
   async ({ query }) => {
-    logWithTimestamp("INFO", `MCP Tool 'search' called with query: "${query}"`);
+    logger.info( `MCP Tool 'search' called with query: "${query}"`);
     try {
       const result = await handleFileSearch({ query });
       logWithTimestamp(
@@ -652,7 +639,7 @@ server.tool(
   }
 );
 
-logWithTimestamp("INFO", "Search tool registered");
+logger.info( "Search tool registered");
 
 // Register fetch tool
 server.tool(
@@ -666,7 +653,7 @@ server.tool(
       ),
   },
   async ({ id }) => {
-    logWithTimestamp("INFO", `MCP Tool 'fetch' called with id: "${id}"`);
+    logger.info( `MCP Tool 'fetch' called with id: "${id}"`);
     try {
       const result = await handleFileRead({ id });
       logWithTimestamp(
@@ -685,7 +672,7 @@ server.tool(
   }
 );
 
-logWithTimestamp("INFO", "Fetch tool registered");
+logger.info( "Fetch tool registered");
 
 // Create Express app for OAuth handling
 const app = express();
@@ -694,7 +681,7 @@ const app = express();
 const hydraRoutes = require("../auth/hydra/hydra-routes");
 
 app.use((req, res, next) => {
-  console.log(`[MCP] ${req.method} ${req.originalUrl}`);
+  logger.info(`[MCP] ${req.method} ${req.originalUrl}`);
   next();
 });
 
@@ -783,12 +770,12 @@ app.use(express.urlencoded({ extended: true }));
 
 // Mount Hydra routes
 app.use("/hydra", hydraRoutes);
-logWithTimestamp("INFO", "Hydra routes mounted on /hydra");
+logger.info( "Hydra routes mounted on /hydra");
 
 // --- Dynamic Client Registration stub for ChatGPT ---
 app.post("/oauth/register", (req, res) => {
-  logWithTimestamp("INFO", "Dynamic client registration requested");
-  logWithTimestamp("DEBUG", "Registration request body:", req.body);
+  logger.info( "Dynamic client registration requested");
+  logger.debug( "Registration request body:", req.body);
 
   if (process.env.OAUTH_PROVIDER !== "hydra") {
     logWithTimestamp(
@@ -816,7 +803,7 @@ app.post("/oauth/register", (req, res) => {
     "SUCCESS",
     `Dynamic registration completed for client: ${OAUTH_CLIENT_ID}`
   );
-  logWithTimestamp("DEBUG", "Registration response:", {
+  logger.debug( "Registration response:", {
     client_id: registrationResponse.client_id,
     grant_types: registrationResponse.grant_types,
     redirect_uris: registrationResponse.redirect_uris,
@@ -854,13 +841,13 @@ app.get("/oauth/login", (req, res) => {
 
 // OAuth callback endpoint
 app.get("/oauth/callback", async (req, res) => {
-  logWithTimestamp("INFO", "Processing OAuth callback");
-  logWithTimestamp("DEBUG", "OAuth callback query params:", req.query);
+  logger.info( "Processing OAuth callback");
+  logger.debug( "OAuth callback query params:", req.query);
 
   const { code, state, error } = req.query;
 
   if (error) {
-    logWithTimestamp("ERROR", "OAuth error:", error);
+    logger.error( "OAuth error:", error);
     return res.status(400).json({ error: `OAuth error: ${error}` });
   }
 
@@ -895,7 +882,7 @@ app.get("/oauth/callback", async (req, res) => {
     });
 
     const { access_token } = tokenResponse.data;
-    logWithTimestamp("SUCCESS", "Successfully obtained access token");
+    logger.info( "Successfully obtained access token");
 
     // Validate user
     const isAuthorized = await validateUser(access_token);
@@ -914,15 +901,15 @@ app.get("/oauth/callback", async (req, res) => {
         redirect: "/mcp",
       });
     } else {
-      logWithTimestamp("WARN", "User not authorized for this service");
+      logger.warn( "User not authorized for this service");
       res.status(403).json({
         error: `Access denied. Only users with ${ALLOWED_EMAIL_DOMAIN} email addresses are allowed.`,
       });
     }
   } catch (error) {
-    logWithTimestamp("ERROR", "Error during OAuth callback:", error.message);
+    logger.error( "Error during OAuth callback:", error.message);
     if (error.response) {
-      logWithTimestamp("ERROR", "OAuth API response error:", {
+      logger.error( "OAuth API response error:", {
         status: error.response.status,
         data: error.response.data,
       });
@@ -933,20 +920,20 @@ app.get("/oauth/callback", async (req, res) => {
 
 // OAuth logout endpoint
 app.get("/oauth/logout", (req, res) => {
-  logWithTimestamp("INFO", "User logging out");
+  logger.info( "User logging out");
   req.session.destroy();
   res.json({ success: true, message: "Logged out successfully" });
 });
 
 // OAuth status endpoint
 app.get("/oauth/status", async (req, res) => {
-  logWithTimestamp("DEBUG", "OAuth status check requested");
+  logger.debug( "OAuth status check requested");
 
   if (req.session.accessToken) {
     try {
       const isValid = await validateUser(req.session.accessToken);
       if (isValid) {
-        logWithTimestamp("SUCCESS", "User authentication status: valid");
+        logger.info( "User authentication status: valid");
         res.json({ authenticated: true, message: "User is authenticated" });
       } else {
         logWithTimestamp(
@@ -960,7 +947,7 @@ app.get("/oauth/status", async (req, res) => {
         });
       }
     } catch (error) {
-      logWithTimestamp("ERROR", "Authentication check failed:", error.message);
+      logger.error( "Authentication check failed:", error.message);
       req.session.destroy();
       res.json({
         authenticated: false,
@@ -968,14 +955,14 @@ app.get("/oauth/status", async (req, res) => {
       });
     }
   } else {
-    logWithTimestamp("DEBUG", "User authentication status: not authenticated");
+    logger.debug( "User authentication status: not authenticated");
     res.json({ authenticated: false, message: "User not authenticated" });
   }
 });
 
 // Health check endpoint
 app.get("/health", (req, res) => {
-  logWithTimestamp("DEBUG", "Health check requested");
+  logger.debug( "Health check requested");
   res.json({
     status: "ok",
     server: "MCP Git Gateway with OAuth",
@@ -1092,7 +1079,7 @@ app.get("/.well-known/oauth-authorization-server", (req, res) => {
 
 // JWKS (JSON Web Key Set) endpoint for OAuth token verification
 app.get("/.well-known/jwks.json", (req, res) => {
-  logWithTimestamp("DEBUG", "JWKS endpoint requested");
+  logger.debug( "JWKS endpoint requested");
   try {
     const jwksPath = path.join(__dirname, "jwks.json");
     const jwks = JSON.parse(fs.readFileSync(jwksPath, "utf8"));
@@ -1100,9 +1087,9 @@ app.get("/.well-known/jwks.json", (req, res) => {
     res.setHeader("Content-Type", "application/json");
     res.status(200).json(jwks);
 
-    logWithTimestamp("SUCCESS", "JWKS served successfully");
+    logger.info( "JWKS served successfully");
   } catch (error) {
-    logWithTimestamp("ERROR", "Error serving JWKS:", error.message);
+    logger.error( "Error serving JWKS:", error.message);
     res.status(500).json({
       error: "Internal server error",
       message: "Failed to load JWKS",
@@ -1140,7 +1127,7 @@ function addMCPResponseLogging(res, sessionId) {
 
     // 🎯 SPECIAL LOGGING FOR INITIALIZE RESPONSES
     if (data && data.result && data.result.protocolVersion) {
-      logWithTimestamp("INFO", `🔧 === INITIALIZE RESPONSE ANALYSIS ===`);
+      logger.info( `🔧 === INITIALIZE RESPONSE ANALYSIS ===`);
       logWithTimestamp(
         "INFO",
         `🔧 Protocol Version: ${data.result.protocolVersion}`
@@ -1186,11 +1173,11 @@ function addMCPResponseLogging(res, sessionId) {
           "INFO",
           `🔧 === PROTOCOL VERSION DETECTED IN RESPONSE ===`
         );
-        logWithTimestamp("INFO", `🔧 Response chunk: ${chunkStr}`);
+        logger.info( `🔧 Response chunk: ${chunkStr}`);
       }
 
       if (chunkStr.includes("tools") && chunkStr.includes("search")) {
-        logWithTimestamp("INFO", `🔧 === SEARCH TOOL DETECTED IN RESPONSE ===`);
+        logger.info( `🔧 === SEARCH TOOL DETECTED IN RESPONSE ===`);
         logWithTimestamp(
           "INFO",
           `🔧 Search tool chunk: ${chunkStr.substring(0, 300)}`
@@ -1277,7 +1264,7 @@ async function main() {
 
   // MCP authorization middleware
   const requireMCPAuth = async (req, res, next) => {
-    logWithTimestamp("DEBUG", "MCP authorization check initiated");
+    logger.debug( "MCP authorization check initiated");
 
     // 1. Detect token sources
     const bearerHeader = req.headers.authorization || req.headers.Authorization;
@@ -1314,7 +1301,7 @@ async function main() {
       req.mcpUserToken = token;
       next();
     } catch (err) {
-      logWithTimestamp("ERROR", "MCP authorization error:", err.message);
+      logger.error( "MCP authorization error:", err.message);
       return res.status(500).json({
         error: "Authorization check failed",
         message: err.message,
@@ -1341,7 +1328,7 @@ async function main() {
       const sessionIdForLogging = req.get("mcp-session-id") || "unknown";
       addMCPResponseLogging(res, sessionIdForLogging);
 
-      logWithTimestamp("INFO", "📨 MCP POST request received");
+      logger.info( "📨 MCP POST request received");
       logWithTimestamp(
         "DEBUG",
         `🔍 MCP POST body: ${JSON.stringify(req.body)}`
@@ -1431,8 +1418,8 @@ async function main() {
         );
       }
     } catch (error) {
-      logWithTimestamp("ERROR", `❌ ❌ MCP POST error: ${error.message}`);
-      logWithTimestamp("ERROR", `❌ ❌ MCP POST stack: ${error.stack}`);
+      logger.error( `❌ ❌ MCP POST error: ${error.message}`);
+      logger.error( `❌ ❌ MCP POST stack: ${error.stack}`);
 
       if (!res.headersSent) {
         res.status(500).json({
@@ -1450,7 +1437,7 @@ async function main() {
   // MCP GET endpoint handler (for SSE streams)
   // This does not work with ChatGPT, but should work with MCP compliant clients.
   const mcpGetHandlerSSE = async (req, res) => {
-    logWithTimestamp("INFO", "📡 MCP GET request received (SSE stream)");
+    logger.info( "📡 MCP GET request received (SSE stream)");
 
     const headerSessionId = req.headers["mcp-session-id"];
     const sessionSessionId = req.session.mcpSessionId;
@@ -1546,7 +1533,7 @@ async function main() {
     const userAgent = req.get("User-Agent") || "unknown";
     const ip = req.ip || req.connection?.remoteAddress || "unknown";
 
-    logWithTimestamp("INFO", `🌐 HTTP GET /mcp - IP: ${ip} - UA: ${userAgent}`);
+    logger.info( `🌐 HTTP GET /mcp - IP: ${ip} - UA: ${userAgent}`);
     logWithTimestamp(
       "DEBUG",
       `📋 Request headers: ${JSON.stringify(req.headers)}`
@@ -1615,7 +1602,7 @@ async function main() {
     }
 
     try {
-      logWithTimestamp("INFO", `🔄 Terminating MCP session: ${sessionId}`);
+      logger.info( `🔄 Terminating MCP session: ${sessionId}`);
       const transport = transports.get(sessionId);
 
       logWithTimestamp(
@@ -1662,7 +1649,7 @@ async function main() {
   app.get("/mcp", requireMCPAuth, mcpGetHandler405);
   app.delete("/mcp", requireMCPAuth, mcpDeleteHandler);
 
-  logWithTimestamp("SUCCESS", "MCP endpoints registered successfully");
+  logger.info( "MCP endpoints registered successfully");
 
   // Add catch-all for unmatched routes AFTER MCP endpoints are set up
   app.use("*", (req, res) => {
@@ -1688,7 +1675,7 @@ async function main() {
       "INFO",
       `📡 Server is listening on http://localhost:${PORT}`
     );
-    logWithTimestamp("INFO", `🔗 MCP endpoint: http://localhost:${PORT}/mcp`);
+    logger.info( `🔗 MCP endpoint: http://localhost:${PORT}/mcp`);
     logWithTimestamp(
       "INFO",
       `🔐 OAuth login: http://localhost:${PORT}/oauth/login`
@@ -1713,8 +1700,8 @@ async function main() {
         BASE_URL ? "(configured)" : "(fallback)"
       }`
     );
-    logWithTimestamp("INFO", `📧 Allowed domain: ${ALLOWED_EMAIL_DOMAIN}`);
-    logWithTimestamp("INFO", `🔧 OAuth Provider: ${OAUTH_PROVIDER}`);
+    logger.info( `📧 Allowed domain: ${ALLOWED_EMAIL_DOMAIN}`);
+    logger.info( `🔧 OAuth Provider: ${OAUTH_PROVIDER}`);
 
     // Initialize Hydra client if using Hydra provider
     if (OAUTH_PROVIDER === "hydra") {
@@ -1737,12 +1724,12 @@ async function main() {
 
   // Handle graceful shutdown
   process.on("SIGINT", async () => {
-    logWithTimestamp("INFO", "\n🛑 Shutting down MCP server...");
+    logger.info( "\n🛑 Shutting down MCP server...");
 
     // Close all active transports
     for (const sessionId of transports.keys()) {
       try {
-        logWithTimestamp("INFO", `Closing transport for session ${sessionId}`);
+        logger.info( `Closing transport for session ${sessionId}`);
         await transports.get(sessionId).close();
         transports.delete(sessionId);
       } catch (error) {
@@ -1754,23 +1741,23 @@ async function main() {
       }
     }
 
-    logWithTimestamp("SUCCESS", "Server shutdown complete");
+    logger.info( "Server shutdown complete");
     process.exit(0);
   });
 }
 
 function start({ enableAuth = true }) {
   // Mode 3: Standard (Full SDK + Full OAuth)
-  console.log(`[STANDARD] Starting MCP SDK server (auth: ${enableAuth})`);
+  logger.info(`[STANDARD] Starting MCP SDK server (auth: ${enableAuth})`);
   
   if (!enableAuth) {
-    console.log(`[STANDARD] WARNING: Running Mode 3 without authentication is unusual`);
-    console.log(`[STANDARD] Consider using Mode 1 (simple) for no-auth scenarios`);
+    logger.info(`[STANDARD] WARNING: Running Mode 3 without authentication is unusual`);
+    logger.info(`[STANDARD] Consider using Mode 1 (simple) for no-auth scenarios`);
   }
   
   // Start the server
   main().catch((error) => {
-    logWithTimestamp("ERROR", "💥 Failed to start server:", error);
+    logger.error( "💥 Failed to start server:", error);
     process.exit(1);
   });
 }

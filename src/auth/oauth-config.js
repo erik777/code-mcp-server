@@ -2,6 +2,7 @@
 // Parses environment variables and creates configuration objects for authentication modules
 
 const crypto = require("crypto");
+const logger = require("../logger");
 
 /**
  * Parse OAuth configuration from environment variables
@@ -90,7 +91,7 @@ function validateOAuthConfig(config) {
         }
     }
 
-    console.log(`[OAUTH-CONFIG] Configuration validated for provider: ${config.provider}`);
+    logger.info(`[OAUTH-CONFIG] Configuration validated for provider: ${config.provider}`);
 }
 
 /**
@@ -98,15 +99,15 @@ function validateOAuthConfig(config) {
  * @param {Object} config - OAuth configuration object
  */
 function logOAuthConfig(config) {
-    console.log("🔧 OAuth Configuration:");
-    console.log(`  Provider: ${config.provider}`);
-    console.log(`  Allowed Domain: ${config.allowedDomain}`);
-    console.log(`  Scopes: ${config.scopes.join(" ")}`);
-    console.log(`  Client ID: ${config.clientId}`);
-    console.log(`  Redirect URI: ${config.redirectUri}`);
-    console.log(`  Auth URL: ${config.authUrl}`);
-    console.log(`  Token URL: ${config.tokenUrl}`);
-    console.log(`  UserInfo URL: ${config.userInfoUrl}`);
+    logger.info("🔧 OAuth Configuration:");
+    logger.info(`  Provider: ${config.provider}`);
+    logger.info(`  Allowed Domain: ${config.allowedDomain}`);
+    logger.info(`  Scopes: ${config.scopes.join(" ")}`);
+    logger.info(`  Client ID: ${config.clientId}`);
+    logger.info(`  Redirect URI: ${config.redirectUri}`);
+    logger.info(`  Auth URL: ${config.authUrl}`);
+    logger.info(`  Token URL: ${config.tokenUrl}`);
+    logger.info(`  UserInfo URL: ${config.userInfoUrl}`);
 }
 
 module.exports = {
