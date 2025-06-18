@@ -1535,7 +1535,7 @@ async function main() {
   };
 
   // MCP GET endpoint handler - Return 405 like working No_Auth version
-  // This works with ChatGPT.
+  // This works with ChatGPT, but disables the SSE stream.
   const mcpGetHandler405 = async (req, res) => {
     const userAgent = req.get("User-Agent") || "unknown";
     const ip = req.ip || req.connection?.remoteAddress || "unknown";
