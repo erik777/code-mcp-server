@@ -12,6 +12,7 @@ This document outlines how to integrate and test the standalone **code-mcp-serve
 * Accessible via: `https://www.example.com/reverse/proxypath`
 * MCP endpoint: `/mcp`
 * OAuth callback: `/oauth/callback`
+* OAuth registration: `/oauth/register` (stub for ChatGPT)
 * Hydra login handler: `/hydra/login`
 * Hydra consent handler: `/hydra/consent`
 * Metadata: `/.well-known/oauth-authorization-server`
@@ -75,6 +76,7 @@ docker run --rm \
 >
 > * `https://www.example.com/reverse/proxypath/oauth/login` – OAuth login start (user-triggered)
 > * `https://www.example.com/reverse/proxypath/oauth/callback` – OAuth redirect after login
+> * `https://www.example.com/reverse/proxypath/oauth/register` – Dynamic client registration (ChatGPT)
 > * `https://www.example.com/reverse/proxypath/hydra/login` – Hydra login handler (Hydra calls this)
 > * `https://www.example.com/reverse/proxypath/hydra/consent` – Hydra consent handler (Hydra calls this)
 > * `https://www.example.com/reverse/proxypath/mcp` – ChatGPT hits this after OAuth auth
@@ -84,6 +86,7 @@ docker run --rm \
 >
 > * `http://localhost:3131/oauth/login`
 > * `http://localhost:3131/oauth/callback`
+> * `http://localhost:3131/oauth/register` – **NOTE: Proxy to MCP server, NOT to Hydra**
 > * `http://localhost:3131/hydra/login`
 > * `http://localhost:3131/hydra/consent`
 > * `http://localhost:3131/mcp`
@@ -141,6 +144,7 @@ Ensure these match in:
   "authorization_endpoint": "http://localhost:4444/oauth2/auth",
   "token_endpoint": "http://localhost:4444/oauth2/token",
   "userinfo_endpoint": "http://localhost:4444/userinfo",
+  "registration_endpoint": "https://www.example.com/reverse/proxypath/oauth/register",
   "scopes_supported": ["openid", "profile", "email"],
   "response_types_supported": ["code"],
   "grant_types_supported": ["authorization_code"],
@@ -175,7 +179,7 @@ if not logged in, or a working response if authenticated.
 * [x] `.well-known/oauth-authorization-server` returns valid metadata
 * [x] MCP responds with 401 if unauthenticated
 * [x] Register `mcp-client` in Hydra via Admin API
-* [ ] ChatGPT MCP connector succeeds in dynamic registration
+* [x] ChatGPT MCP connector succeeds in dynamic registration
 * [ ] Successful login and authenticated `/mcp` access from ChatGPT
 
 ---

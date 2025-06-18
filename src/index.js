@@ -594,6 +594,42 @@ app.use(express.urlencoded({ extended: true }));
 app.use('/hydra', hydraRoutes);
 logWithTimestamp('INFO', 'Hydra routes mounted on /hydra');
 
+// --- Dynamic Client Registration stub for ChatGPT ---
+app.post('/oauth/register', (req, res) => {
+    logWithTimestamp('INFO', 'Dynamic client registration requested');
+    logWithTimestamp('DEBUG', 'Registration request body:', req.body);
+    
+    if (process.env.OAUTH_PROVIDER !== 'hydra') {
+        logWithTimestamp('WARN', `Dynamic registration not supported for provider: ${process.env.OAUTH_PROVIDER}`);
+        return res.status(400).json({ 
+            error: 'Dynamic registration only supported under Hydra',
+            provider: process.env.OAUTH_PROVIDER 
+        });
+    }
+    
+    // Return static client credentials for ChatGPT
+    const registrationResponse = {
+        client_id: OAUTH_CLIENT_ID,
+        client_secret: OAUTH_CLIENT_SECRET,
+        token_endpoint_auth_method: 'client_secret_post',
+        grant_types: ['authorization_code'],
+        response_types: ['code'],
+        redirect_uris: [REDIRECT_URI],
+        scope: OAUTH_SCOPES.join(' ')
+    };
+    
+    logWithTimestamp('SUCCESS', `Dynamic registration completed for client: ${OAUTH_CLIENT_ID}`);
+    logWithTimestamp('DEBUG', 'Registration response:', {
+        client_id: registrationResponse.client_id,
+        grant_types: registrationResponse.grant_types,
+        redirect_uris: registrationResponse.redirect_uris,
+        scope: registrationResponse.scope
+    });
+    
+    return res.json(registrationResponse);
+});
+// -----------------------------------------------------
+
 // OAuth initiation endpoint
 app.get("/oauth/login", (req, res) => {
     logWithTimestamp('INFO', `OAuth login initiated with provider: ${OAUTH_PROVIDER}`);
@@ -767,6 +803,9 @@ app.get("/.well-known/oauth-authorization-server", (req, res) => {
         if (OAUTH_JWKS_URL) {
             metadata.jwks_uri = BASE_URL && OAUTH_PROVIDER === 'hydra' ? `${oauthBaseUrl}/.well-known/jwks.json` : OAUTH_JWKS_URL;
         }
+
+        // Add dynamic client registration endpoint for ChatGPT
+        metadata.registration_endpoint = `${EFFECTIVE_BASE_URL}/oauth/register`;
 
         // Add MCP-specific endpoints
         metadata.mcp_endpoints = {
@@ -998,6 +1037,7 @@ async function main() {
     app.use('*', (req, res) => {
         logWithTimestamp('WARN', `🚫 Unmatched route: ${req.method} ${req.originalUrl}`);
         logWithTimestamp('DEBUG', 'Available routes:', [
+            'POST /oauth/register',
             'GET /oauth/login',
             'GET /oauth/callback', 
             'GET /oauth/status',
@@ -1020,6 +1060,7 @@ async function main() {
             path: req.originalUrl,
             message: "This endpoint does not exist on this server",
             availableEndpoints: [
+                'POST /oauth/register - Dynamic client registration for ChatGPT',
                 'GET /oauth/login - Initiate OAuth flow',
                 'GET /oauth/callback - OAuth callback handler', 
                 'GET /oauth/status - Check authentication status',
