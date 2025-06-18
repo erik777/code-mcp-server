@@ -34,6 +34,7 @@ Both modes will optionally support OAuth-based authentication via an environment
      * Dependencies: `auth.js`, `hydra/`, `simple.js`, `standard.js`
    * Include expected inputs/outputs for `mcp-tester.js`
    * Ensure Cursor references these docs when suggesting edits or merges
+   * Output in `docs/config-toggles.md`
 
 3. **Restore and Rename Original MCP Server**
 
