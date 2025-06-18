@@ -888,40 +888,45 @@ async function main() {
 
     // MCP authorization middleware
     const requireMCPAuth = async (req, res, next) => {
-        logWithTimestamp('DEBUG', 'MCP authorization check initiated');
-        logWithTimestamp('DEBUG', `MCP request details: ${req.method} ${req.url}, sessionID: ${req.sessionID?.substring(0, 8)}...`);
-        
-        // Check if user has valid session token
-        if (!req.session || !req.session.accessToken) {
-            logWithTimestamp('ERROR', 'MCP authorization failed: No session or access token');
-            return res.status(401).json({
-                error: "Authentication required",
-                message: "Please authenticate via OAuth first",
-                loginUrl: "/oauth/login"
-            });
+      logWithTimestamp('DEBUG', 'MCP authorization check initiated');
+
+      // 1. Detect token sources
+      const bearerHeader = req.headers.authorization || req.headers.Authorization;
+      const bearerMatch  = bearerHeader?.match(/^Bearer\s+(.+)$/i);
+      const bearerToken  = bearerMatch ? bearerMatch[1] : null;
+      const sessionToken = req.session?.accessToken || null;
+      const token        = bearerToken || sessionToken;   // prefer explicit Bearer
+
+      logWithTimestamp('DEBUG', `Auth sources → bearer=${!!bearerToken}, session=${!!sessionToken}`);
+
+      // 2. No token at all → 401
+      if (!token) {
+        return res.status(401).json({
+          error   : 'Authentication required',
+          message : 'Supply an Authorization: Bearer <token> header or login via /oauth/login'
+        });
+      }
+
+      try {
+        // 3. Validate token (Hydra / Google / Custom)
+        const isAuthorized = await validateUser(token);
+        if (!isAuthorized) {
+          return res.status(403).json({
+            error   : 'User not authorized',
+            message : `Only users with ${ALLOWED_EMAIL_DOMAIN} email addresses are allowed.`
+          });
         }
 
-        // Validate the token and user
-        logWithTimestamp('DEBUG', 'Validating user token for MCP access');
-        try {
-            const isAuthorized = await validateUser(req.session.accessToken);
-            if (!isAuthorized) {
-                logWithTimestamp('ERROR', 'MCP authorization failed: User not authorized');
-                return res.status(403).json({
-                    error: "User not authorized",
-                    message: `Only users with ${ALLOWED_EMAIL_DOMAIN} email addresses are allowed.`
-                });
-            }
-
-            logWithTimestamp('SUCCESS', 'MCP request authorized successfully');
-            next();
-        } catch (error) {
-            logWithTimestamp('ERROR', 'MCP authorization error:', error.message);
-            return res.status(500).json({
-                error: "Authorization check failed",
-                message: error.message
-            });
-        }
+        // 4. Stash the validated token on the request for downstream handlers
+        req.mcpUserToken = token;
+        next();
+      } catch (err) {
+        logWithTimestamp('ERROR', 'MCP authorization error:', err.message);
+        return res.status(500).json({
+          error   : 'Authorization check failed',
+          message : err.message
+        });
+      }
     };
 
     // MCP POST endpoint handler
