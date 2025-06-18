@@ -1,6 +1,6 @@
-// Mode 2: Simple MCP Server + OAuth (Bearer-only, ChatGPT compatible)
-// Based on simple.js but with Bearer token authentication
-// No OAuth flows or sessions - pure stateless Bearer token validation
+// Mode 2: Simple MCP Server + OAuth (Minimal OAuth, ChatGPT compatible)
+// Based on simple.js but with minimal OAuth flows for ChatGPT's connector
+// Supports both OAuth authorization_code flow and Bearer token validation
 
 const express = require("express");
 const simpleGit = require("simple-git");
@@ -8,6 +8,8 @@ const fs = require("fs");
 const path = require("path");
 const axios = require("axios");
 const logger = require("../logger");
+const session = require("express-session");
+const crypto = require("crypto");
 
 // Import authentication modules
 const { createBearerAuth } = require("../auth/bearer-only");
@@ -19,9 +21,9 @@ const PORT = process.env.PORT || 3131;
 const BASE_URL = process.env.BASE_URL;
 const EFFECTIVE_BASE_URL = BASE_URL || `http://localhost:${PORT}`;
 
-logger.info("[SIMPLE-AUTH] Starting Mode 2: Simple MCP Server + OAuth (Bearer-only)");
-logger.info("[SIMPLE-AUTH] 🎯 EXPERIMENTAL: Testing Bearer-only auth with ChatGPT Deep Research");
-logger.info("[SIMPLE-AUTH] 📋 Features: MCP Tools + Bearer token validation (no OAuth flows)");
+logger.info("[SIMPLE-AUTH] Starting Mode 2: Simple MCP Server + OAuth (Minimal flows)");
+logger.info("[SIMPLE-AUTH] 🎯 EXPERIMENTAL: Testing minimal OAuth flows with ChatGPT Deep Research");
+logger.info("[SIMPLE-AUTH] 📋 Features: MCP Tools + OAuth flows + Bearer token validation");
 
 // Parse OAuth configuration
 let oauthConfig;
@@ -355,12 +357,147 @@ async function start({ enableAuth = true }) {
         // Create Bearer authentication middleware
         const bearerAuth = createBearerAuth(oauthConfig);
 
+        // Add minimal session support (only for OAuth state parameter)
+        app.use(session({
+            secret: process.env.SESSION_SECRET || crypto.randomBytes(64).toString("hex"),
+            resave: false,
+            saveUninitialized: false,
+            cookie: {
+                secure: false, // Set to true in production with HTTPS
+                httpOnly: true,
+                maxAge: 10 * 60 * 1000, // 10 minutes (minimal for OAuth flow)
+            },
+        }));
+
+        // OAuth discovery endpoint (required for ChatGPT's OAuth connector)
+        app.get("/.well-known/oauth-authorization-server", (req, res) => {
+            logger.debug("OAuth authorization server metadata requested");
+            try {
+                const metadata = {
+                    issuer: EFFECTIVE_BASE_URL,
+                    authorization_endpoint: oauthConfig.authUrl,
+                    token_endpoint: oauthConfig.tokenUrl,
+                    userinfo_endpoint: oauthConfig.userInfoUrl,
+                    scopes_supported: oauthConfig.scopes,
+                    response_types_supported: ["code"],
+                    grant_types_supported: ["authorization_code"],
+                    token_endpoint_auth_methods_supported: ["client_secret_post", "client_secret_basic"],
+                    registration_endpoint: `${EFFECTIVE_BASE_URL}/oauth/register`,
+                    mcp_endpoints: {
+                        login: `${EFFECTIVE_BASE_URL}/oauth/login`,
+                        callback: `${EFFECTIVE_BASE_URL}/oauth/callback`,
+                        mcp: `${EFFECTIVE_BASE_URL}/mcp`,
+                    },
+                };
+
+                res.setHeader("Content-Type", "application/json");
+                res.json(metadata);
+                logger.info("OAuth authorization server metadata served for Mode 2");
+            } catch (error) {
+                logger.error("Error generating OAuth metadata", { error: error.message });
+                res.status(500).json({
+                    error: "Internal server error",
+                    message: "Failed to generate OAuth authorization server metadata",
+                });
+            }
+        });
+
+        // OAuth registration endpoint (for ChatGPT dynamic client registration)
+        app.post("/oauth/register", (req, res) => {
+            logger.info("Dynamic client registration requested for Mode 2");
+
+            // Return static client credentials for ChatGPT (simplified)
+            const registrationResponse = {
+                client_id: oauthConfig.clientId,
+                client_secret: oauthConfig.clientSecret,
+                redirect_uris: [oauthConfig.redirectUri],
+                client_name: "ChatGPT MCP Connector",
+                grant_types: ["authorization_code"],
+                response_types: ["code"],
+                scope: oauthConfig.scopes.join(" "),
+            };
+
+            logger.info("Dynamic registration response provided for Mode 2", { client_id: registrationResponse.client_id });
+            res.json(registrationResponse);
+        });
+
+        // OAuth login endpoint (minimal implementation)
+        app.get("/oauth/login", (req, res) => {
+            logger.info("OAuth login initiated in Mode 2");
+
+            // Generate state parameter for CSRF protection
+            const state = crypto.randomBytes(32).toString("hex");
+            req.session.oauthState = state;
+
+            const authUrl = new URL(oauthConfig.authUrl);
+            authUrl.searchParams.set("client_id", oauthConfig.clientId);
+            authUrl.searchParams.set("redirect_uri", oauthConfig.redirectUri);
+            authUrl.searchParams.set("response_type", "code");
+            authUrl.searchParams.set("scope", oauthConfig.scopes.join(" "));
+            authUrl.searchParams.set("state", state);
+
+            logger.info(`Redirecting to OAuth provider: ${authUrl.toString()}`);
+            res.redirect(authUrl.toString());
+        });
+
+        // OAuth callback endpoint (minimal implementation)
+        app.get("/oauth/callback", async(req, res) => {
+            logger.info("Processing OAuth callback in Mode 2");
+            const { code, state, error } = req.query;
+
+            if (error) {
+                logger.error("OAuth error in callback", { error });
+                return res.status(400).json({ error: `OAuth error: ${error}` });
+            }
+
+            if (!code) {
+                logger.error("No authorization code received in OAuth callback");
+                return res.status(400).json({ error: "No authorization code received" });
+            }
+
+            if (state !== req.session.oauthState) {
+                logger.error("Invalid OAuth state parameter", { expected: req.session.oauthState, received: state });
+                return res.status(400).json({ error: "Invalid state parameter" });
+            }
+
+            try {
+                // Exchange code for token
+                logger.info("Exchanging authorization code for access token in Mode 2");
+                const tokenResponse = await axios.post(oauthConfig.tokenUrl, {
+                    client_id: oauthConfig.clientId,
+                    client_secret: oauthConfig.clientSecret,
+                    code: code,
+                    grant_type: "authorization_code",
+                    redirect_uri: oauthConfig.redirectUri,
+                });
+
+                const { access_token } = tokenResponse.data;
+                logger.info("Successfully obtained access token in Mode 2");
+
+                // Clear OAuth state from session
+                delete req.session.oauthState;
+
+                // Return the token to the user (Mode 2 doesn't store it in session)
+                res.json({
+                    success: true,
+                    message: "Authentication successful! Use this Bearer token for MCP requests.",
+                    access_token: access_token,
+                    instructions: `Add this header to MCP requests: Authorization: Bearer ${access_token}`,
+                    mcp_endpoint: `${EFFECTIVE_BASE_URL}/mcp`
+                });
+
+            } catch (error) {
+                logger.error("Error during OAuth callback in Mode 2", { error: error.message });
+                res.status(500).json({ error: "Authentication failed" });
+            }
+        });
+
         // Health check endpoint (no auth required)
         app.get("/health", (req, res) => {
             logger.debug("Health check requested");
             res.json({
                 status: "ok",
-                server: "MCP Git Gateway (Simple + Bearer Auth)",
+                server: "MCP Git Gateway (Simple + OAuth)",
                 version: "1.0.0",
                 mode: "simple-auth",
                 repo: REPO_PATH,
@@ -368,8 +505,15 @@ async function start({ enableAuth = true }) {
                     enabled: true,
                     provider: oauthConfig.provider,
                     allowedDomain: oauthConfig.allowedDomain,
-                    authType: "bearer-only",
-                    note: "No OAuth flows available - supply Bearer token directly"
+                    authType: "minimal-oauth",
+                    flows: ["authorization_code", "bearer_token"],
+                    endpoints: {
+                        discovery: `${EFFECTIVE_BASE_URL}/.well-known/oauth-authorization-server`,
+                        login: `${EFFECTIVE_BASE_URL}/oauth/login`,
+                        callback: `${EFFECTIVE_BASE_URL}/oauth/callback`,
+                        register: `${EFFECTIVE_BASE_URL}/oauth/register`
+                    },
+                    note: "Minimal OAuth flows for ChatGPT connector + Bearer token validation"
                 },
             });
         });
@@ -415,9 +559,11 @@ async function start({ enableAuth = true }) {
             logger.info(`[SIMPLE-AUTH] 📡 Server is listening on http://localhost:${PORT}`);
             logger.info(`[SIMPLE-AUTH] 🔗 MCP endpoint: http://localhost:${PORT}/mcp`);
             logger.info(`[SIMPLE-AUTH] 💊 Health check: http://localhost:${PORT}/health`);
-            logger.info("[SIMPLE-AUTH] 🔐 Authentication: Bearer token required");
+            logger.info("[SIMPLE-AUTH] 🔐 Authentication: OAuth flows + Bearer token");
             logger.info(`[SIMPLE-AUTH] 🎯 Provider: ${oauthConfig.provider} (${oauthConfig.allowedDomain})`);
-            logger.info("[SIMPLE-AUTH] ⚠️  No OAuth flows - supply Bearer token directly in Authorization header");
+            logger.info(`[SIMPLE-AUTH] 🔍 Discovery: ${EFFECTIVE_BASE_URL}/.well-known/oauth-authorization-server`);
+            logger.info(`[SIMPLE-AUTH] 🚪 Login: ${EFFECTIVE_BASE_URL}/oauth/login`);
+            logger.info("[SIMPLE-AUTH] ✨ Ready for ChatGPT OAuth connector!");
         });
 
     } catch (error) {
