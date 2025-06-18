@@ -596,7 +596,12 @@ app.use(session({
     cookie: { secure: false } // Set to true in production with HTTPS
 }));
 
-app.use(express.json());
+// Global middleware
+app.use((req, res, next) => {
+    if (req.path.startsWith('/mcp')) return next(); // skip for /mcp
+    express.json()(req, res, next);
+  });
+  
 
 // Add cookie parser for CSRF handling
 app.use(cookieParser());
@@ -863,39 +868,109 @@ app.get("/.well-known/jwks.json", (req, res) => {
     }
 });
 
+// 🔍 ADD MCP PROTOCOL RESPONSE LOGGING
+// Intercept all response methods to log MCP protocol details
+function addMCPResponseLogging(res, sessionId) {
+    const originalSend = res.send.bind(res);
+    const originalJson = res.json.bind(res);
+    const originalWrite = res.write.bind(res);
+    const originalEnd = res.end.bind(res);
+    
+    res.send = function(data) {
+        logWithTimestamp('DEBUG', `🔍 📤 MCP RESPONSE SEND (${sessionId}): Status=${res.statusCode}, Data=${typeof data === 'string' ? data.substring(0, 500) : JSON.stringify(data).substring(0, 500)}`);
+        return originalSend(data);
+    };
+    
+    res.json = function(data) {
+        logWithTimestamp('DEBUG', `🔍 📤 MCP RESPONSE JSON (${sessionId}): Status=${res.statusCode}, Data=${JSON.stringify(data).substring(0, 500)}`);
+        
+        // 🎯 SPECIAL LOGGING FOR INITIALIZE RESPONSES
+        if (data && data.result && data.result.protocolVersion) {
+            logWithTimestamp('INFO', `🔧 === INITIALIZE RESPONSE ANALYSIS ===`);
+            logWithTimestamp('INFO', `🔧 Protocol Version: ${data.result.protocolVersion}`);
+            logWithTimestamp('INFO', `🔧 Server Info: ${JSON.stringify(data.result.serverInfo)}`);
+            logWithTimestamp('INFO', `🔧 Capabilities: ${JSON.stringify(data.result.capabilities)}`);
+            
+            if (data.result.capabilities && data.result.capabilities.tools) {
+                logWithTimestamp('INFO', `🔧 Tools Capability: ${JSON.stringify(data.result.capabilities.tools)}`);
+            } else {
+                logWithTimestamp('ERROR', `❌ MISSING TOOLS CAPABILITY IN INITIALIZE RESPONSE!`);
+            }
+        }
+        
+        return originalJson(data);
+    };
+    
+    res.write = function(chunk) {
+        if (chunk) {
+            const chunkStr = chunk.toString();
+            logWithTimestamp('DEBUG', `🔍 📤 MCP RESPONSE WRITE (${sessionId}): ${chunkStr.substring(0, 200)}`);
+            
+            // Check for specific MCP protocol patterns
+            if (chunkStr.includes('protocolVersion')) {
+                logWithTimestamp('INFO', `🔧 === PROTOCOL VERSION DETECTED IN RESPONSE ===`);
+                logWithTimestamp('INFO', `🔧 Response chunk: ${chunkStr}`);
+            }
+            
+            if (chunkStr.includes('tools') && chunkStr.includes('search')) {
+                logWithTimestamp('INFO', `🔧 === SEARCH TOOL DETECTED IN RESPONSE ===`);
+                logWithTimestamp('INFO', `🔧 Search tool chunk: ${chunkStr.substring(0, 300)}`);
+            }
+        }
+        return originalWrite(chunk);
+    };
+    
+    res.end = function(chunk) {
+        if (chunk) {
+            const chunkStr = chunk.toString();
+            logWithTimestamp('DEBUG', `🔍 📤 MCP RESPONSE END (${sessionId}): Status=${res.statusCode}, Final chunk: ${chunkStr.substring(0, 200)}`);
+        } else {
+            logWithTimestamp('DEBUG', `🔍 📤 MCP RESPONSE END (${sessionId}): Status=${res.statusCode}, No final chunk`);
+        }
+        return originalEnd(chunk);
+    };
+}
+
+// Track MCP transports by session ID
+const transports = new Map();
+const requestCounts = {};  // Track concurrent requests per session
+
+// 🔍 Helper function to generate short IDs for request tracking
+function generateShortId() {
+    return Math.random().toString(36).substring(2, 8);
+}
+
 // Start the server with OAuth-protected MCP transport
 async function main() {
     logWithTimestamp('INFO', 'Setting up StreamableHTTPServerTransport with OAuth...');
 
-    // Map to store transports by session ID (for session management)
-    const transports = {};
-
-    // Create StreamableHTTPServerTransport
-    const createTransport = (sessionId = null) => {
-        return new StreamableHTTPServerTransport({
-            sessionIdGenerator: () => sessionId || crypto.randomBytes(16).toString('hex'),
-            enableJsonResponse: true,
-            onsessioninitialized: (sessionId) => {
-                logWithTimestamp('INFO', `New MCP session initialized: ${sessionId}`);
+    // Create MCP transport with proper initialization
+    async function createTransport(sessionId = null) {
+        const finalSessionId = sessionId || crypto.randomBytes(16).toString('hex');
+        logWithTimestamp('DEBUG', `🔧 Creating transport with sessionId: ${finalSessionId}`);
+        
+        const transport = new StreamableHTTPServerTransport(
+            async (req, res) => {
+                // This callback handles HTTP requests for the transport
+                logWithTimestamp('DEBUG', '🔧 StreamableHTTPServerTransport callback invoked');
             },
-            authorize: {
-              type: 'oauth2',
-              authorizationUrl: OAUTH_AUTH_URL,
-              tokenUrl: OAUTH_TOKEN_URL,
-              userInfoUrl: OAUTH_USERINFO_URL,
-              scopes: OAUTH_SCOPES,
-              clientId: OAUTH_CLIENT_ID,
-              clientSecret: OAUTH_CLIENT_SECRET,
-              onTokenReceived: async (token, userInfo) => {
-                const email = userInfo.email;
-                if (!email || !email.endsWith(ALLOWED_EMAIL_DOMAIN)) {
-                  throw new Error(`Access denied. Only users with ${ALLOWED_EMAIL_DOMAIN} email addresses are allowed.`)
-                }
-                return userInfo
-              }
+            {
+                // Use the provided sessionId 
+                sessionIdGenerator: () => finalSessionId
             }
-        });
-    };
+        );
+        
+        // 🔥 CRITICAL FIX: Connect and start the transport SYNCHRONOUSLY
+        try {
+            await server.connect(transport);
+            logWithTimestamp('SUCCESS', `✅ MCP server connected to new transport: ${finalSessionId}`);
+        } catch (error) {
+            logWithTimestamp('ERROR', `❌ Failed to connect MCP transport ${finalSessionId}: ${error.message}`);
+            throw error;
+        }
+        
+        return transport;
+    }
 
     // MCP authorization middleware
     const requireMCPAuth = async (req, res, next) => {
@@ -942,107 +1017,106 @@ async function main() {
 
     // MCP POST endpoint handler
     const mcpPostHandler = async (req, res) => {
-        logWithTimestamp('INFO', 'MCP POST request received');
-        logWithTimestamp('DEBUG', 'MCP POST body:', req.body);
+        const userAgent = req.get('User-Agent') || 'unknown';
+        const ip = req.ip || req.connection?.remoteAddress || 'unknown';
         
-        try {
-            // Get or create session ID
-            const headerSessionId = req.headers['mcp-session-id'];
-            const sessionSessionId = req.session.mcpSessionId;
-            
-            // 🔍 TEMPORARY INSTRUMENTATION - Transport Registry Debug
-            logWithTimestamp('DEBUG', `🔍 MCP POST headers: mcp-session-id=${headerSessionId}, content-type=${req.headers['content-type']}`);
-            logWithTimestamp('DEBUG', `🔍 Session ID resolution: header=${headerSessionId}, session=${sessionSessionId}, final=${headerSessionId || sessionSessionId}`);
-            logWithTimestamp('DEBUG', `🔍 Current transports: ${Object.keys(transports).join(',')}`);
-            
-            let sessionId = headerSessionId || sessionSessionId;
-            
-            if (!sessionId || !transports[sessionId]) {
-                // Create new transport and session
-                sessionId = headerSessionId || crypto.randomBytes(16).toString('hex');
-                const transport = createTransport(sessionId);
-                logWithTimestamp('DEBUG', `🔧 POST: Created transport with session ID: ${sessionId} (transport ID: ${transport.sessionId})`);
-                transports[sessionId] = transport;
-                req.session.mcpSessionId = sessionId;
-                
-                // Connect server to transport
-                await server.connect(transport);
-                logWithTimestamp('SUCCESS', `✅ MCP server connected to new transport: ${sessionId}`);
-            } else {
-                logWithTimestamp('DEBUG', `🔍 Using existing transport: ${sessionId}`);
-            }
+        logWithTimestamp('INFO', `🌐 HTTP POST /mcp - IP: ${ip} - UA: ${userAgent}`);
+        logWithTimestamp('DEBUG', `📋 Request headers: ${JSON.stringify(req.headers)}`);
 
-            const transport = transports[sessionId];
-            logWithTimestamp('DEBUG', `🔍 About to call transport.handleRequest for session ${sessionId}`);
-            logWithTimestamp('DEBUG', `🔍 Headers already sent before transport call: ${res.headersSent}`);
-            await transport.handleRequest(req, res, req.body);
-            logWithTimestamp('DEBUG', `🔍 After transport call - Headers sent: ${res.headersSent}, Status: ${res.statusCode}`);
+        try {
+            // Add MCP response logging
+            const sessionIdForLogging = req.get('mcp-session-id') || 'unknown';
+            addMCPResponseLogging(res, sessionIdForLogging);
+            
+            logWithTimestamp('INFO', '📨 MCP POST request received');
+            logWithTimestamp('DEBUG', `🔍 MCP POST body: ${JSON.stringify(req.body)}`);
+            
+            const mcpSessionId = req.get('mcp-session-id');
+            const contentType = req.get('content-type');
+            
+            logWithTimestamp('DEBUG', `🔍 MCP POST headers: mcp-session-id=${mcpSessionId}, content-type=${contentType}`);
+            
+            // Session ID resolution (use MCP header or fallback to Express session)
+            const sessionIdResolution = mcpSessionId || req.sessionID || 'default';
+            logWithTimestamp('DEBUG', `🔍 Session ID resolution: header=${mcpSessionId}, session=${req.sessionID}, final=${sessionIdResolution}`);
+            
+            const requestId = generateShortId();
+            
+            // Track concurrent requests per session
+            if (!requestCounts[sessionIdResolution]) {
+                requestCounts[sessionIdResolution] = 0;
+            }
+            requestCounts[sessionIdResolution]++;
+            logWithTimestamp('WARNING', `🚨 CONCURRENCY: Session ${sessionIdResolution} now has ${requestCounts[sessionIdResolution]} active requests: POST:${requestId}`);
+
+            try {
+                // Check if we have an existing transport for this session
+                let transport = transports.get(sessionIdResolution);
+                
+                if (!transport) {
+                    logWithTimestamp('INFO', `🚀 Bootstrap case: creating transport for requested session ${sessionIdResolution}`);
+                    transport = await createTransport(sessionIdResolution);
+                    
+                    // Store transport
+                    transports.set(sessionIdResolution, transport);
+                    logWithTimestamp('INFO', `✅ ✅ Bootstrapped new transport for session ${sessionIdResolution}`);
+                } else {
+                    logWithTimestamp('DEBUG', `🔍 Using existing transport: ${sessionIdResolution}`);
+                }
+                
+                // Handle the request through transport
+                logWithTimestamp('DEBUG', `🔍 About to call transport.handleRequest for session ${transport.sessionId || sessionIdResolution}`);
+                logWithTimestamp('DEBUG', `🔍 Headers already sent before transport call: ${res.headersSent}`);
+                
+                await transport.handleRequest(req, res);
+                
+                logWithTimestamp('DEBUG', `🔍 After transport call - Headers sent: ${res.headersSent}, Status: ${res.statusCode}`);
+                logWithTimestamp('INFO', `📤 MCP POST response sent with status: ${res.statusCode}, size: ${res.get('Content-Length') || 'unknown'} bytes`);
+                
+            } finally {
+                // Decrement request count
+                requestCounts[sessionIdResolution]--;
+                logWithTimestamp('WARNING', `🚨 CONCURRENCY: Session ${sessionIdResolution} request ${requestId} completed, ${requestCounts[sessionIdResolution]} remaining`);
+            }
             
         } catch (error) {
-            logWithTimestamp('ERROR', 'Error handling MCP POST request:', error.message);
+            logWithTimestamp('ERROR', `❌ ❌ MCP POST error: ${error.message}`);
+            logWithTimestamp('ERROR', `❌ ❌ MCP POST stack: ${error.stack}`);
+            
             if (!res.headersSent) {
                 res.status(500).json({
-                    error: "MCP request processing failed",
-                    message: error.message
+                    jsonrpc: "2.0",
+                    error: {
+                        code: -32603,
+                        message: "Internal error"
+                    },
+                    id: null
                 });
             }
         }
     };
 
-    // MCP GET endpoint handler (for SSE streams)
+    // MCP GET endpoint handler - Return 405 like working No_Auth version
     const mcpGetHandler = async (req, res) => {
-        logWithTimestamp('INFO', '📡 MCP GET request received (SSE stream)');
+        const userAgent = req.get('User-Agent') || 'unknown';
+        const ip = req.ip || req.connection?.remoteAddress || 'unknown';
         
-        const headerSessionId = req.headers['mcp-session-id'];
-        const sessionSessionId = req.session.mcpSessionId;
+        logWithTimestamp('INFO', `🌐 HTTP GET /mcp - IP: ${ip} - UA: ${userAgent}`);
+        logWithTimestamp('DEBUG', `📋 Request headers: ${JSON.stringify(req.headers)}`);
         
-        // 🔍 TEMPORARY INSTRUMENTATION - Transport Registry Debug
-        logWithTimestamp('DEBUG', `🔍 MCP GET headers: mcp-session-id=${headerSessionId}, accept=${req.headers.accept}, last-event-id=${req.headers['last-event-id']}`);
-        logWithTimestamp('DEBUG', `🔍 Session ID resolution: header=${headerSessionId}, session=${sessionSessionId}, final=${headerSessionId || sessionSessionId}`);
-        logWithTimestamp('DEBUG', `🔍 Current transports: ${Object.keys(transports).join(',')}`);
+        logWithTimestamp('INFO', '📡 GET request to /mcp - Method not allowed (forcing POST handshake)');
         
-        let sessionId = headerSessionId || sessionSessionId;
-        let transport;
+        // Return 405 Method Not Allowed to force ChatGPT into proper POST sequence
+        res.status(405).json({
+            jsonrpc: "2.0",
+            error: {
+                code: -32000,
+                message: "Method not allowed. Use POST for client-to-server communication.",
+            },
+            id: null,
+        });
         
-        // Create new transport if none exists
-        if (!sessionId || !transports[sessionId]) {
-            sessionId = headerSessionId || crypto.randomBytes(16).toString('hex');
-            const newTransport = createTransport(sessionId);
-            logWithTimestamp('DEBUG', `🔧 GET: Created transport with session ID: ${sessionId} (transport ID: ${newTransport.sessionId})`);
-            transports[sessionId] = newTransport;
-            req.session.mcpSessionId = sessionId;
-            transport = newTransport;
-            
-            // Connect server to transport
-            await server.connect(transport);
-            logWithTimestamp('INFO', `🌊 Establishing new SSE stream for session ${sessionId}`);
-        } else {
-            transport = transports[sessionId];
-            logWithTimestamp('DEBUG', `🔍 Using existing transport for SSE: ${sessionId}`);
-        }
-
-        try {
-            const lastEventId = req.headers['last-event-id'];
-            if (lastEventId) {
-                logWithTimestamp('INFO', `MCP client reconnecting with Last-Event-ID: ${lastEventId}`);
-            } else {
-                logWithTimestamp('INFO', `🌊 Establishing SSE stream for session ${sessionId}`);
-            }
-
-            logWithTimestamp('DEBUG', `🔍 About to call transport.handleRequest for GET session ${sessionId}`);
-            logWithTimestamp('DEBUG', `🔍 Headers already sent before transport call: ${res.headersSent}`);
-            await transport.handleRequest(req, res);
-            logWithTimestamp('DEBUG', `🔍 After transport call - Headers sent: ${res.headersSent}, Status: ${res.statusCode}`);
-            
-        } catch (error) {
-            logWithTimestamp('ERROR', 'Error handling MCP GET request:', error.message);
-            if (!res.headersSent) {
-                res.status(500).json({
-                    error: "SSE stream establishment failed",
-                    message: error.message
-                });
-            }
-        }
+        logWithTimestamp('INFO', `📤 HTTP GET /mcp - Status: 405 - Size: 109 bytes`);
     };
 
     // MCP DELETE endpoint handler (for session termination)
@@ -1055,12 +1129,12 @@ async function main() {
         // 🔍 TEMPORARY INSTRUMENTATION - Transport Registry Debug
         logWithTimestamp('DEBUG', `🔍 MCP DELETE headers: mcp-session-id=${headerSessionId}`);
         logWithTimestamp('DEBUG', `🔍 Session ID resolution: header=${headerSessionId}, session=${sessionSessionId}, final=${headerSessionId || sessionSessionId}`);
-        logWithTimestamp('DEBUG', `🔍 Current transports: ${Object.keys(transports).join(',')}`);
+        logWithTimestamp('DEBUG', `🔍 Current transports: ${Array.from(transports.keys()).join(',')}`);
         
         const sessionId = headerSessionId || sessionSessionId;
         
         // Accept DELETE even if transport doesn't exist
-        if (!sessionId || !transports[sessionId]) {
+        if (!sessionId || !transports.has(sessionId)) {
             logWithTimestamp('INFO', '❌ MCP DELETE request with invalid or missing session ID');
             return res.status(400).json({
                 error: "Invalid session",
@@ -1070,7 +1144,7 @@ async function main() {
 
         try {
             logWithTimestamp('INFO', `🔄 Terminating MCP session: ${sessionId}`);
-            const transport = transports[sessionId];
+            const transport = transports.get(sessionId);
             
             logWithTimestamp('DEBUG', `🔍 About to call transport.handleRequest for DELETE session ${sessionId}`);
             logWithTimestamp('DEBUG', `🔍 Headers already sent before transport call: ${res.headersSent}`);
@@ -1078,7 +1152,7 @@ async function main() {
             logWithTimestamp('DEBUG', `🔍 After transport call - Headers sent: ${res.headersSent}, Status: ${res.statusCode}`);
             
             // Clean up transport
-            delete transports[sessionId];
+            transports.delete(sessionId);
             if (req.session.mcpSessionId === sessionId) {
                 delete req.session.mcpSessionId;
             }
@@ -1106,46 +1180,11 @@ async function main() {
     // Add catch-all for unmatched routes AFTER MCP endpoints are set up
     app.use('*', (req, res) => {
         logWithTimestamp('WARN', `🚫 Unmatched route: ${req.method} ${req.originalUrl}`);
-        logWithTimestamp('DEBUG', 'Available routes:', [
-            'POST /oauth/register',
-            'GET /oauth/login',
-            'GET /oauth/callback', 
-            'GET /oauth/status',
-            'GET /oauth/logout',
-            'GET /hydra/login',
-            'POST /hydra/login',
-            'GET /hydra/consent',
-            'GET /hydra/health',
-            'GET /health',
-            'GET /.well-known/oauth-authorization-server',
-            'GET /.well-known/jwks.json',
-            'POST /mcp (MCP protocol endpoint)',
-            'GET /mcp (MCP SSE stream)',
-            'DELETE /mcp (MCP session termination)'
-        ]);
-        
         res.status(404).json({
             error: "Route not found",
             method: req.method,
             path: req.originalUrl,
-            message: "This endpoint does not exist on this server",
-            availableEndpoints: [
-                'POST /oauth/register - Dynamic client registration for ChatGPT',
-                'GET /oauth/login - Initiate OAuth flow',
-                'GET /oauth/callback - OAuth callback handler', 
-                'GET /oauth/status - Check authentication status',
-                'GET /oauth/logout - Logout user',
-                'GET /hydra/login - Hydra login challenge handler',
-                'POST /hydra/login - Hydra login form submission',
-                'GET /hydra/consent - Hydra consent challenge handler',
-                'GET /hydra/health - Hydra health check',
-                'GET /health - Server health check',
-                'GET /.well-known/oauth-authorization-server - OAuth server metadata',
-                'GET /.well-known/jwks.json - JSON Web Key Set for token verification',
-                'POST /mcp - MCP protocol endpoint (requires authentication)',
-                'GET /mcp - MCP SSE stream (requires authentication)',
-                'DELETE /mcp - MCP session termination (requires authentication)'
-            ]
+            message: "This endpoint does not exist on this server"
         });
     });
 
@@ -1181,11 +1220,11 @@ async function main() {
         logWithTimestamp('INFO', '\n🛑 Shutting down MCP server...');
         
         // Close all active transports
-        for (const sessionId in transports) {
+        for (const sessionId of transports.keys()) {
             try {
                 logWithTimestamp('INFO', `Closing transport for session ${sessionId}`);
-                await transports[sessionId].close();
-                delete transports[sessionId];
+                await transports.get(sessionId).close();
+                transports.delete(sessionId);
             } catch (error) {
                 logWithTimestamp('ERROR', `Error closing transport for session ${sessionId}:`, error.message);
             }
