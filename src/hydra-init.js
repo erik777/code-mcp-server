@@ -129,10 +129,11 @@ async function initHydra() {
         }
 
         // Step 2: Register new client
+        // client_credentials - allows local token generation
         const clientConfig = {
             client_id: clientId,
             client_secret: clientSecret,
-            grant_types: ["authorization_code", "refresh_token"],
+            grant_types: ["authorization_code", "refresh_token", "client_credentials"],
             response_types: ["code"],
             scope: "openid profile email",
             redirect_uris: BASE_REDIRECTS,
