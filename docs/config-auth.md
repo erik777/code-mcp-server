@@ -1,13 +1,19 @@
 # MCP Server Current Authentication Configuration
 
-**Date**: Step 1 Documentation (Dual-Mode Auth Plan)  
-**Purpose**: Document current OAuth2/Hydra integration for reference during refactoring
+**Date**: Step 1 Documentation (Three-Mode Auth Plan)  
+**Purpose**: Document current OAuth2/Hydra integration for reference during three-mode refactoring  
+**Update**: Revised to reflect new 3-mode architecture approach
 
 ---
 
 ## Overview
 
-The MCP server currently implements **mandatory OAuth-based authentication** using a unified architecture that supports multiple OAuth providers. This document captures the current implementation structure, configuration, and flows to serve as a reference during the dual-mode refactor.
+The MCP server currently implements **mandatory OAuth-based authentication** using a unified architecture that supports multiple OAuth providers. This document captures the current implementation structure, configuration, and flows to serve as a reference during the **three-mode refactor**.
+
+**Post-Refactor Vision**: The current monolithic auth system will be split into three distinct modes:
+- **Mode 1**: Simple (No Auth) - Proven ChatGPT compatibility
+- **Mode 2**: Simple + OAuth - Experimental ChatGPT with authentication  
+- **Mode 3**: Standard - Future/non-ChatGPT applications
 
 ## Current Authentication Architecture
 
@@ -19,6 +25,20 @@ src/
 ├── hydra-init.js      # Hydra client auto-registration (197 lines) 
 ├── hydra-routes.js    # Hydra-specific OAuth routes (335 lines)
 └── jwks.json          # Empty JWKS placeholder
+```
+
+**Post-Refactor Target Structure**:
+```
+src/
+├── index.js               # Mode selector bootstrap
+├── modes/
+│   ├── simple.js          # Mode 1: No Auth (from No_Auth tag)
+│   ├── simple-auth.js     # Mode 2: Simple + OAuth (experimental)
+│   └── standard.js        # Mode 3: Current implementation
+├── auth/
+│   ├── bearer-only.js     # Lightweight validation for Mode 2
+│   ├── oauth-session.js   # OAuth flows for Mode 2/3
+│   └── hydra/             # Hydra-specific components
 ```
 
 ### Authentication Integration Points
@@ -40,11 +60,13 @@ src/
    - Consent flow management (`/hydra/consent`)
    - CSRF protection via cookies
 
+**Note**: Current authentication will be preserved as **Mode 3 (Standard)** in the new architecture.
+
 ---
 
 ## Environment Variables Configuration
 
-### Required Core Variables
+### Current Variables (Mode 3 Implementation)
 
 ```bash
 # OAuth Provider Selection
@@ -63,6 +85,18 @@ ALLOWED_EMAIL_DOMAIN=@example.com
 # URL Configuration
 BASE_URL=<public-url>                   # Optional: for production reverse proxy
 MCP_INTERNAL_URL=http://localhost:3131  # Fallback URL
+```
+
+### Planned Mode Variables (Post-Refactor)
+
+```bash
+# Three-Mode Selection
+MCP_MODE=simple        # Mode 1: No Auth (proven ChatGPT compatibility)
+MCP_MODE=simple-auth   # Mode 2: Simple + OAuth (experimental ChatGPT auth)
+MCP_MODE=standard      # Mode 3: Current implementation (future/non-ChatGPT)
+
+# Optional Auth Toggle (if needed)
+ENABLE_AUTH=true       # Additional toggle for Mode 2/3
 ```
 
 ### Hydra-Specific Variables
@@ -114,6 +148,11 @@ app.use(
 );
 ```
 
+**Post-Refactor Mapping**:
+- **Mode 1**: No session middleware (stateless)
+- **Mode 2**: Minimal session middleware (OAuth state only)
+- **Mode 3**: Full session middleware (current implementation)
+
 ### Session Data Structure
 
 - `req.session.oauthState` - CSRF protection state parameter
@@ -144,6 +183,11 @@ async function validateUser(token) {
 }
 ```
 
+**Post-Refactor Usage**:
+- **Mode 1**: Not used (no authentication)
+- **Mode 2**: Shared validation logic (`auth/bearer-only.js`)
+- **Mode 3**: Current implementation preserved
+
 ### MCP Authentication Middleware
 
 **Location**: `src/index.js:1273-1318` (`requireMCPAuth`)
@@ -159,34 +203,41 @@ async function validateUser(token) {
 4. Return 403 if user not authorized (wrong domain)
 5. Store validated token in `req.mcpUserToken` and continue
 
+**Post-Refactor Distribution**:
+- **Mode 1**: No authentication middleware
+- **Mode 2**: Simplified Bearer-only middleware
+- **Mode 3**: Current implementation preserved
+
 ---
 
 ## OAuth Flow Endpoints
 
 ### Standard OAuth Endpoints
 
-| Endpoint | Method | Purpose | Authentication |
-|----------|--------|---------|----------------|
-| `/oauth/login` | GET | Initiate OAuth flow | None |
-| `/oauth/callback` | GET | Handle OAuth callback | None |
-| `/oauth/logout` | GET | Destroy session | None |
-| `/oauth/status` | GET | Check auth status | None |
-| `/oauth/register` | POST | Dynamic client registration | None |
+| Endpoint | Method | Purpose | Mode 1 | Mode 2 | Mode 3 |
+|----------|--------|---------|--------|--------|--------|
+| `/oauth/login` | GET | Initiate OAuth flow | ❌ | ✅ | ✅ |
+| `/oauth/callback` | GET | Handle OAuth callback | ❌ | ✅ | ✅ |
+| `/oauth/logout` | GET | Destroy session | ❌ | ✅ | ✅ |
+| `/oauth/status` | GET | Check auth status | ❌ | ✅ | ✅ |
+| `/oauth/register` | POST | Dynamic client registration | ❌ | ❌ | ✅ |
 
 ### Hydra-Specific Endpoints
 
-| Endpoint | Method | Purpose | Authentication |
-|----------|--------|---------|----------------|
-| `/hydra/login` | GET/POST | Hydra login challenge | None |
-| `/hydra/consent` | GET/POST | Hydra consent challenge | None |
+| Endpoint | Method | Purpose | Mode 1 | Mode 2 | Mode 3 |
+|----------|--------|---------|--------|--------|--------|
+| `/hydra/login` | GET/POST | Hydra login challenge | ❌ | ✅* | ✅ |
+| `/hydra/consent` | GET/POST | Hydra consent challenge | ❌ | ❌ | ✅ |
 
-### MCP Endpoints (Protected)
+*Mode 2 may support simplified Hydra login if needed for ChatGPT
 
-| Endpoint | Method | Purpose | Authentication |
-|----------|--------|---------|----------------|
-| `/mcp` | POST | MCP JSON-RPC requests | **Required** |
-| `/mcp` | GET | MCP SSE streams | **Required** |
-| `/mcp` | DELETE | MCP session termination | **Required** |
+### MCP Endpoints (Core Functionality)
+
+| Endpoint | Method | Purpose | Mode 1 | Mode 2 | Mode 3 |
+|----------|--------|---------|--------|--------|--------|
+| `/mcp` | POST | MCP JSON-RPC requests | ✅ | ✅ | ✅ |
+| `/mcp` | GET | MCP SSE streams | ❌ | ❌ | ✅ |
+| `/mcp` | DELETE | MCP session termination | ❌ | ❌ | ✅ |
 
 ---
 
@@ -194,6 +245,7 @@ async function validateUser(token) {
 
 ### 1. Standard OAuth Flow (Google/Custom)
 
+**Current Implementation** (will become Mode 3):
 ```
 User -> MCP: GET /oauth/login
 MCP -> MCP: Generate state, store in session
@@ -210,8 +262,22 @@ MCP -> MCP: Store token in session
 MCP -> User: Success response
 ```
 
+**Planned Mode 2 Flow** (simplified for ChatGPT):
+```
+User -> MCP: GET /oauth/login
+MCP -> MCP: Generate state (minimal session)
+MCP -> User: Redirect to OAuth Provider
+User -> OAuth: Authenticate
+OAuth -> MCP: GET /oauth/callback?code=...&state=...
+MCP -> MCP: Validate state, clean session
+MCP -> OAuth: POST /token (exchange code)
+OAuth -> MCP: access_token
+MCP -> User: Token response (for ChatGPT to use as Bearer)
+```
+
 ### 2. Hydra OAuth Flow
 
+**Current Implementation** (will become Mode 3):
 ```
 User -> MCP: GET /oauth/login
 MCP -> Hydra: Redirect to /oauth2/auth
@@ -240,6 +306,11 @@ MCP -> User: Success response
 - **Hydra CSRF Cookies**: Challenge-based cookies for login/consent flows
 - **Cookie Settings**: `httpOnly: true, sameSite: 'None', secure: <env-dependent>`
 
+**Post-Refactor Mapping**:
+- **Mode 1**: No CSRF protection needed (no auth)
+- **Mode 2**: Minimal CSRF for OAuth state only
+- **Mode 3**: Full CSRF protection (current implementation)
+
 ### Session Security
 
 - **Session Secret**: 64-byte random hex (auto-generated if not configured)
@@ -252,6 +323,11 @@ MCP -> User: Success response
 - **Session-based**: No JWT validation, relies on OAuth provider introspection
 - **Domain Restriction**: Email domain validation via `ALLOWED_EMAIL_DOMAIN`
 
+**Post-Refactor Strategy**:
+- **Mode 1**: No token storage
+- **Mode 2**: Minimal token handling (Bearer validation only)
+- **Mode 3**: Full session-based token storage (current)
+
 ---
 
 ## Current Dependencies
@@ -263,8 +339,13 @@ MCP -> User: Success response
 - `crypto` - State/secret generation
 
 ### MCP Integration
-- `@modelcontextprotocol/sdk` - Official MCP SDK
-- `StreamableHTTPServerTransport` - HTTP transport with streaming
+- `@modelcontextprotocol/sdk` - Official MCP SDK (Mode 3 only)
+- `StreamableHTTPServerTransport` - HTTP transport with streaming (Mode 3 only)
+
+**Post-Refactor Dependencies by Mode**:
+- **Mode 1**: Minimal (express, basic JSON-RPC)
+- **Mode 2**: Light OAuth (express, axios, minimal session)
+- **Mode 3**: Full stack (current dependencies)
 
 ---
 
@@ -278,6 +359,11 @@ MCP -> User: Success response
 2. **Auto-Creation**: POST `/clients` if not exists
 3. **Redirect URI Updates**: PUT `/clients/{client_id}` for REDIRECT_URI2
 4. **Error Handling**: Graceful fallbacks for network/auth errors
+
+**Post-Refactor Usage**:
+- **Mode 1**: Not used
+- **Mode 2**: May be used if Hydra provider selected
+- **Mode 3**: Full Hydra integration (current)
 
 ### Client Configuration
 
@@ -305,6 +391,11 @@ MCP -> User: Success response
 4. **In-Memory Sessions**: No persistent session storage
 5. **Single-Domain Restriction**: Only one email domain supported
 
+**Post-Refactor Resolution**:
+- **Mode Selection**: Three distinct modes with different capabilities
+- **Authentication Optional**: Mode 1 (no auth), Mode 2/3 (optional auth)
+- **Appropriate Complexity**: Each mode gets suitable architecture
+
 ### OAuth Provider Assumptions
 
 1. **Standard Userinfo Endpoint**: Must support `/userinfo` with email field
@@ -321,67 +412,54 @@ MCP -> User: Success response
 
 ---
 
-## Technical Debt & Concerns
-
-### Code Organization
-- **Monolithic Structure**: All OAuth logic in single 1760-line file
-- **Mixed Concerns**: MCP logic intertwined with OAuth logic
-- **No Separation**: Cannot easily disable or mock authentication
-
-### Configuration Complexity
-- **URL Fallback Chain**: Complex BASE_URL → MCP_INTERNAL_URL → defaults
-- **Provider-Specific Branching**: Scattered provider configuration logic
-- **Environment Variable Proliferation**: 15+ environment variables
-
-### Session Management
-- **No Persistence**: Sessions lost on server restart
-- **Memory Usage**: Unbounded session growth
-- **No Cleanup**: No session expiration handling
-
----
-
 ## Breaking Points for Refactor
 
 ### Authentication Toggleability
 **Current State**: Authentication is hardcoded and cannot be disabled
-**Required Change**: Need environment flag to bypass `requireMCPAuth`
+**Refactor Solution**: Mode 1 (no auth), Mode 2/3 (optional auth)
 
 ### Code Separation
 **Current State**: OAuth and MCP logic intermixed in single file
-**Required Change**: Extract OAuth logic to separate modules
+**Refactor Solution**: Separate mode files with shared auth modules
 
 ### Session Decoupling
 **Current State**: MCP sessions tied to Express sessions
-**Required Change**: Separate MCP session management from OAuth sessions
+**Refactor Solution**: Mode-appropriate session strategies
 
 ### Transport Management
 **Current State**: Transport creation coupled with auth middleware
-**Required Change**: Decouple transport lifecycle from authentication
+**Refactor Solution**: Mode-specific transport handling
 
 ---
 
 ## Reference Points for Refactor
 
 ### Key Functions to Preserve
-- `validateUser()` - Token validation logic
-- `requireMCPAuth()` - Authentication middleware structure
-- Hydra client auto-registration flow
-- CSRF protection mechanisms
+- `validateUser()` - Token validation logic (Mode 2/3)
+- `requireMCPAuth()` - Authentication middleware structure (Mode 3)
+- Hydra client auto-registration flow (Mode 3)
+- CSRF protection mechanisms (Mode 2/3)
 
 ### Configuration to Maintain
-- Multi-provider OAuth support
-- Environment variable naming
-- Redirect URI handling
-- Email domain validation
+- Multi-provider OAuth support (Mode 2/3)
+- Environment variable naming (extend with MCP_MODE)
+- Redirect URI handling (Mode 2/3)
+- Email domain validation (Mode 2/3)
 
 ### Flows to Preserve
-- Standard OAuth authorization code flow
-- Hydra challenge-response flow
-- Session-based token storage
-- Bearer token authentication
+- Standard OAuth authorization code flow (Mode 3)
+- Hydra challenge-response flow (Mode 3)
+- Session-based token storage (Mode 3)
+- Bearer token authentication (Mode 2/3)
+
+### New Requirements for Mode 2
+- **Minimal OAuth**: Just enough for ChatGPT compatibility
+- **Stateless Preference**: Minimal session usage
+- **ChatGPT Integration**: Must work with Deep Research
+- **Fallback Safety**: Mode 1 always available if Mode 2 fails
 
 ---
 
 **END OF DOCUMENTATION**
 
-*This document serves as a comprehensive reference for the current authentication implementation. It should be consulted before making changes during the dual-mode refactor to ensure backward compatibility and prevent regressions.* 
+*This document serves as a comprehensive reference for the current authentication implementation and its mapping to the new three-mode architecture. It should be consulted before making changes during the refactor to ensure backward compatibility and prevent regressions.* 

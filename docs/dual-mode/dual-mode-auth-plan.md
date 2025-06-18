@@ -1,122 +1,123 @@
-**MCP Dual-Mode Server Refactor Plan with Optional Auth**
+**MCP Three-Mode Server Architecture Plan with Optional Auth**
 
 **Overview**
-This plan outlines a refactor of the MCP server to support two runtime modes:
+This plan outlines a refactor of the MCP server to support three runtime modes, each serving a distinct use case. The goal is to enable secure Deep Research support via OAuth while preserving a proven baseline and maintaining flexibility for future needs.
 
-1. A minimal, known-good MCP server using the original custom JSON-RPC implementation.
-2. A standards-compliant MCP SDK-based server with streaming support.
+### 🚦 Mode Breakdown
 
-Both modes will optionally support OAuth-based authentication via an environment flag. This structure provides clear separation between reliable baseline behavior and experimental/advanced protocol features.
+#### **Mode 1: Simple (No Auth)**
 
-**Goals**
+* ✅ Proven compatibility with ChatGPT Deep Research
+* 📄 Based on the original `No_Auth` JSON-RPC implementation
+* 🔒 No authentication — used for open or local development
+* 🧪 Always test this first to confirm baseline functionality
 
-* Restore full Deep Research functionality using the original handler.
-* Preserve the SDK-based implementation for future streaming use cases.
-* Enable authentication as a reusable, toggleable component.
-* Allow configuration via environment flags.
-* Validate each phase using the `mcp-tester.js` tool created by Cursor.
-* Provide clear documentation of configuration and usage to protect against accidental breakage by automated tools (e.g. Cursor).
+#### **Mode 2: Simple + OAuth (Experimental)**
+
+* 🎯 Primary objective of this refactor
+* 🧪 Simple Mode with just enough OAuth to support ChatGPT login/token flows
+* 💡 Adds minimal session middleware *only* for `state` handling during OAuth handshake
+* ✅ Targeted for secure code sharing with ChatGPT
+* 🔍 Subject to ongoing testing — may fail, and that’s acceptable (Mode 1 is fallback)
+
+#### **Mode 3: Standard (SDK-Based)**
+
+* 🔮 Reserved for future non-ChatGPT use cases
+* ✅ Full MCP SDK, sessions, SSE streaming, etc.
+* ❌ Not compatible with ChatGPT Deep Research
+* 🧰 Useful for future integrations or advanced clients
+
+---
+
+**Primary Goals**
+
+* Enable **OAuth-protected Deep Research support** in Simple Mode (Mode 2)
+* Preserve a **proven stateless baseline** for rapid fallback (Mode 1)
+* Maintain SDK-based infrastructure for future use (Mode 3)
+* Isolate risks and testing scope across modes
+* Prevent architectural contradictions by making capabilities explicit per mode
+
+---
 
 **Implementation Steps**
 
 1. **Document the current configuration and usage for authorization and Hydra integration**
 
-   * Clearly document the current structure and logic for OAuth2/Hydra integration, including token validation and session handling.
-   * Capture any required environment variables, expected token flows, and assumptions about session cookies or domains.
-   * This serves as a reference point for future maintenance and for Cursor to avoid introducing regressions.
+   * Describe token validation, OAuth endpoints, session handling, and CSRF logic
+   * Clarify that this applies to Mode 2 and Mode 3, not Mode 1
 
-2. **Document Configuration and Usage of new feature toggling**
+2. **Document Configuration and Usage of Feature Toggles**
 
-   * Clearly document the purpose and structure of:
-
-     * `USE_STANDARD` (switch between simple and standard modes)
-     * `ENABLE_AUTH` (toggle authentication)
-     * Dependencies: `auth.js`, `hydra/`, `simple.js`, `standard.js`
-   * Include expected inputs/outputs for `mcp-tester.js`
-   * Ensure Cursor references these docs when suggesting edits or merges
-   * Output in `docs/config-toggles.md`
+   * Define `MCP_MODE=simple`, `simple-auth`, or `standard`
+   * Define `ENABLE_AUTH=true` if needed to separate auth toggling further
+   * Map out file/module responsibilities (e.g. `auth/`, `modes/`, `hydra/`)
 
 3. **Restore and Rename Original MCP Server**
 
-   * Use the `No_Auth` tag as a reference only.
-   * Extract `index.js` directly from the `No_Auth` tag without checking it out fully.
-   * Copy the file into `src/simple.js`.
-   * This file will serve as the JSON-RPC-only version of the server.
-   * Create a `src/hydra` folder and move `hydra-init.js` and \`hydra-routes.js\` into the folder ensuring imports in src/index.js reference the files in the new locations.
+   * Extract the `No_Auth` version as the base for Mode 1 and Mode 2
+   * Save it as `src/modes/simple.js`
+   * Verify it works immediately with ChatGPT (Mode 1)
 
-4. **Rename SDK-Based Server and Create Unified Entry Point**
+4. **Create Separate Entrypoints for All Three Modes**
 
-   * Move `src/index.js` to `src/standard.js`.
+   * `src/modes/simple.js`: Mode 1 — No auth
+   * `src/modes/simple-auth.js`: Mode 2 — Minimal OAuth
+   * `src/modes/standard.js`: Mode 3 — Full SDK-based
+   * Add `src/index.js` to load based on `MCP_MODE`
 
-   * This file contains the current SDK-based implementation with streaming.
+5. **Refactor Shared Auth Logic**
 
-   * Create a new `src/index.js` that loads either `simple.js` or `standard.js`.
+   * Create `auth/bearer-only.js` for Mode 2
+   * Create `auth/oauth-session.js` for login + token flow (Mode 2 + 3)
+   * Move `hydra/` helpers under `auth/`
 
-   * Use `USE_STANDARD` environment variable to select mode.
+6. **Implement Conditional OAuth Support**
 
-   * Pass `{ enableAuth }` to selected mode via a `start()` function.
+   * In Mode 2, support only what’s needed for ChatGPT’s connector flow:
 
-   * Ensure the server runs and is testable in both modes before proceeding.
+     * `/oauth/login`, `/oauth/callback`, token exchange
+     * Short-lived session for `state`
+   * In Mode 3, support full session + consent flows + `express-session`
 
-   * Create a new `src/index.js` that loads either `simple.js` or `standard.js`.
+7. **Add Startup Mode Confirmation**
 
-   * Use `USE_STANDARD` environment variable to select mode.
-
-   * Pass `{ enableAuth }` to selected mode via a `start()` function.
-
-5. **Refactor Authentication Logic**
-
-   * Extract `requireMCPAuth`, session handling, and Hydra integrations into `src/auth.js`.
-   * Preserve existing `hydra/*.js` helpers and routes.
-   * Ensure both `simple.js` and `standard.js` can consume `auth.js`.
-
-6. **Inject Auth Conditionally**
-
-   * Add logic to both `start()` methods to apply `requireMCPAuth` only when `enableAuth` is true.
-   * In `simple.js`, support only Bearer token-based validation (no sessions).
-   * In `standard.js`, support both token-based and session-based validation, including cookie-based sessions managed by `express-session`.
-   * Clearly isolate these behaviors so that Cursor understands: **simple.js uses stateless auth**, while **standard.js may maintain session state** via middleware.
-
-7. **Logging and Mode Confirmation**
-
-   * On startup, print mode summary:
-
-     ```
-     [BOOT MODE] MCP Server mode: SIMPLE | AUTH: ENABLED
-     ```
+   ```
+   [BOOT MODE] MCP Server mode: SIMPLE-AUTH | AUTH: ENABLED
+   ```
 
 8. **Validation and Regression Testing**
 
-   * After each structural change, validate:
+   * Use `mcp-tester.js` to validate all three modes independently
+   * Run Deep Research against Mode 1 and Mode 2 only
+   * Track failures, fallback to Mode 1 when needed
 
-     * `POST /mcp` with `initialize` and `tools/list`
-     * Tool execution via `search`, `fetch`
-     * Stream completion (`event: done`) if in standard mode
-     * Authentication flow (if enabled)
-   * Use `mcp-tester.js` for all validation to avoid consuming Deep Research quota.
-   * The user can test ChatGPT validation of each mode
+---
 
 **Environment Variables**
 
-* `USE_STANDARD=true` → Use SDK-based `standard.js` server
-* `ENABLE_AUTH=true` → Enable OAuth-based access control
+* `MCP_MODE=simple` → Stateless, no auth (Mode 1)
+* `MCP_MODE=simple-auth` → Simple + OAuth (Mode 2)
+* `MCP_MODE=standard` → SDK + full auth (Mode 3)
+* `ENABLE_AUTH=true` → Optional (used to toggle logic in Mode 2/3)
 
 **Directory Layout (after refactor)**
 
 ```bash
 src/
-├── index.js         # Bootstrap mode selector
-├── simple.js        # Original JSON-RPC server
-├── standard.js      # SDK-based MCP server with streaming
-├── auth.js          # Shared auth middleware (Hydra, session)
-└── hydra/           # Hydra config, routes, helpers
+├── index.js               # Loads appropriate mode
+├── modes/
+│   ├── simple.js          # Mode 1
+│   ├── simple-auth.js     # Mode 2
+│   └── standard.js        # Mode 3
+├── auth/
+│   ├── bearer-only.js     # Stateless validator
+│   ├── oauth-session.js   # Lightweight OAuth flow handler
+│   └── hydra/             # Hydra-specific tools
 ```
 
-**Next Steps**
-
-* Begin with restoring `simple.js` and confirming Deep Research works without auth.
-* Incrementally introduce auth, then switch to SDK and retest.
-* Use `mcp-tester.js` at each step to catch regressions early.
-
 **Outcome**
-A fully flexible MCP gateway supporting both MVP-proven reliability and forward-compatible streaming, with toggled authentication and minimal surface area for bugs.
+A cleanly separated, testable, and scalable three-mode MCP architecture:
+
+* ✅ Immediate support for ChatGPT without auth (Mode 1)
+* 🧪 Experimental OAuth support for secure ChatGPT usage (Mode 2)
+* 🔮 Streaming/advanced capabilities for future applications (Mode 3)
