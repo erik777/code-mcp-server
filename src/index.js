@@ -874,6 +874,7 @@ async function main() {
     const createTransport = (sessionId = null) => {
         return new StreamableHTTPServerTransport({
             sessionIdGenerator: () => sessionId || crypto.randomBytes(16).toString('hex'),
+            enableJsonResponse: true,
             onsessioninitialized: (sessionId) => {
                 logWithTimestamp('INFO', `New MCP session initialized: ${sessionId}`);
             },
