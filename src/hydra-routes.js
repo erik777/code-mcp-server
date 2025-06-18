@@ -255,18 +255,35 @@ router.post('/consent', async(req, res) => {
 
     try {
         if (submit === 'accept') {
-            // Accept consent with Hydra Admin API
-            logWithTimestamp('DEBUG', `Accepting consent challenge: ${consent_challenge}`);
-            const { data } = await axios.put(
-                `${HYDRA_ADMIN_URL}/admin/oauth2/auth/requests/consent/accept?consent_challenge=${consent_challenge}`, {
-                    grant_scope: ['openid', 'profile', 'email'],
-                    remember: false
+            // 1. Fetch consent details so we get subject & requested scopes
+            const { data: consentInfo } = await axios.get(
+                `${HYDRA_ADMIN_URL}/oauth2/auth/requests/consent?consent_challenge=${consent_challenge}`
+            );
+            const { subject, requested_scope = [] } = consentInfo;
+
+            // 2. Build payload with dynamic scopes and ID/Access-token claims
+            const acceptPayload = {
+                grant_scope: requested_scope,
+                remember: false,
+                session: {
+                    id_token: {
+                        email: subject,
+                        email_verified: true
+                    },
+                    access_token: {
+                        email: subject
+                    }
                 }
+            };
+
+            // 3. Accept consent
+            const { data } = await axios.put(
+                `${HYDRA_ADMIN_URL}/admin/oauth2/auth/requests/consent/accept?consent_challenge=${consent_challenge}`,
+                acceptPayload
             );
 
             logWithTimestamp('SUCCESS', `Consent granted for challenge: ${consent_challenge}`);
             logWithTimestamp('DEBUG', `Redirecting to: ${data.redirect_to}`);
-
             return res.redirect(302, data.redirect_to);
         } else {
             // Deny consent
