@@ -1,17 +1,19 @@
 // MCP Git Gateway using official @modelcontextprotocol/sdk with Google OAuth 2.0
 // Stack: Node.js + MCP SDK + OAuth 2.0 + simple-git
 
-// Load environment files in priority order: .env.local > .env > defaults
+// Load environment files in priority order: .env.test.local > .env.local > .env > defaults
+require("dotenv").config({ path: ".env.test.local" });
 require("dotenv").config({ path: ".env.local" });
 require("dotenv").config({ path: ".env" });
 
-const { McpServer } = require("@modelcontextprotocol/sdk/dist/cjs/server/mcp");
-const {
-    StreamableHTTPServerTransport,
-} = require("@modelcontextprotocol/sdk/server/streamableHttp.js");
 const { z } = require("zod");
 const fs = require("fs");
 const path = require("path");
+const sdkPath = path.join(__dirname, "../../node_modules/@modelcontextprotocol/sdk/dist/cjs");
+const { McpServer } = require(path.join(sdkPath, "server/mcp"));
+const {
+    StreamableHTTPServerTransport,
+} = require(path.join(sdkPath, "server/streamableHttp"));
 const simpleGit = require("simple-git");
 const express = require("express");
 const session = require("express-session");
