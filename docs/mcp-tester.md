@@ -34,7 +34,7 @@ node mcp-tester.js --url <server-url> --token <bearer-token>
 
 ```bash
 node mcp-tester.js \
-  --url "https://www.servicecraze.com/corsair/mcp1/mcp" \
+  --url "https://www.example.com/reverse/proxypath/mcp" \
   --token "your-oauth-token-here" \
   --session-id "custom-session-id" \
   --tool "search" \
@@ -60,14 +60,14 @@ node mcp-tester.js \
 ```
 🧪 MCP Protocol Tester
 ======================
-📍 Server URL: https://www.servicecraze.com/corsair/mcp1/mcp
+📍 Server URL: https://www.example.com/reverse/proxypath/mcp
 🆔 Session ID: 550e8400-e29b-41d4-a716-446655440000
 🔧 Tool: search
 ⏱️  Timeout: 5000ms
 
 🚀 Phase 1: Initialize MCP Connection
 =====================================
-📤 POST https://www.servicecraze.com/corsair/mcp1/mcp
+📤 POST https://www.example.com/reverse/proxypath/mcp
 📦 Body: {
   "jsonrpc": "2.0",
   "id": 1,

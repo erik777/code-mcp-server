@@ -22,7 +22,7 @@ const authCodes = new Map(); // Map<authCode, {clientId, redirectUri, state, tim
 const accessTokens = new Map(); // Map<accessToken, {clientId, issuedAt, expiresAt}>
 
 // Configuration
-const REPO_PATH = process.env.REPO_PATH || "/home/erik/dev/ws/cursor/oc-sc/oc-ui";
+const REPO_PATH = process.env.REPO_PATH || "repo";
 const PORT = process.env.PORT || 3131;
 const BASE_URL = process.env.BASE_URL;
 const EFFECTIVE_BASE_URL = BASE_URL || `http://localhost:${PORT}`;

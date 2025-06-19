@@ -54,7 +54,7 @@ const { parseOAuthConfig, validateOAuthConfig, logOAuthConfig } = require("../au
 
 // Configuration
 const PORT = process.env.PORT || 3131;
-const REPO_PATH = process.env.REPO_PATH || "/home/erik/dev/ws/cursor/oc-sc/oc-ui";
+const REPO_PATH = process.env.REPO_PATH || "repo";
 const git = simpleGit(REPO_PATH);
 
 // OAuth Configuration
