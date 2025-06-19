@@ -369,126 +369,195 @@ async function start({ enableAuth = true }) {
             },
         }));
 
-        // OAuth discovery endpoint (required for ChatGPT's OAuth connector)
-        app.get("/.well-known/oauth-authorization-server", (req, res) => {
-            logger.debug("OAuth authorization server metadata requested");
-            try {
-                const metadata = {
-                    issuer: EFFECTIVE_BASE_URL,
-                    authorization_endpoint: oauthConfig.authUrl,
-                    token_endpoint: oauthConfig.tokenUrl,
-                    userinfo_endpoint: oauthConfig.userInfoUrl,
-                    scopes_supported: oauthConfig.scopes,
-                    response_types_supported: ["code"],
-                    grant_types_supported: ["authorization_code"],
-                    token_endpoint_auth_methods_supported: ["client_secret_post", "client_secret_basic"],
-                    registration_endpoint: `${EFFECTIVE_BASE_URL}/oauth/register`,
-                    mcp_endpoints: {
-                        login: `${EFFECTIVE_BASE_URL}/oauth/login`,
-                        callback: `${EFFECTIVE_BASE_URL}/oauth/callback`,
-                        mcp: `${EFFECTIVE_BASE_URL}/mcp`,
-                    },
-                };
+        // CORS middleware
+        app.use((req, res, next) => {
+            res.header('Access-Control-Allow-Origin', '*');
+            res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+            res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
-                res.setHeader("Content-Type", "application/json");
-                res.json(metadata);
-                logger.info("OAuth authorization server metadata served for Mode 2");
-            } catch (error) {
-                logger.error("Error generating OAuth metadata", { error: error.message });
-                res.status(500).json({
-                    error: "Internal server error",
-                    message: "Failed to generate OAuth authorization server metadata",
-                });
+            if (req.method === 'OPTIONS') {
+                res.sendStatus(200);
+            } else {
+                next();
             }
         });
 
-        // OAuth registration endpoint (for ChatGPT dynamic client registration)
-        app.post("/oauth/register", (req, res) => {
-            logger.info("Dynamic client registration requested for Mode 2");
+        // Comprehensive HTTP request logging middleware
+        app.use((req, res, next) => {
+            const startTime = Date.now();
+            logger.info(`📨 [HTTP] ${req.method} ${req.url} - Start`);
+            logger.info(`📨 [HTTP] Headers: ${JSON.stringify(req.headers)}`);
 
-            // Return static client credentials for ChatGPT (simplified)
-            const registrationResponse = {
-                client_id: oauthConfig.clientId,
-                client_secret: oauthConfig.clientSecret,
-                redirect_uris: [oauthConfig.redirectUri],
-                client_name: "ChatGPT MCP Connector",
-                grant_types: ["authorization_code"],
-                response_types: ["code"],
-                scope: oauthConfig.scopes.join(" "),
+            // Override res.send, res.json, etc. to capture responses
+            const originalSend = res.send;
+            const originalJson = res.json;
+            const originalStatus = res.status;
+
+            let statusCode = 200;
+            let responseBody = null;
+
+            res.status = function(code) {
+                statusCode = code;
+                return originalStatus.call(this, code);
             };
 
-            logger.info("Dynamic registration response provided for Mode 2", { client_id: registrationResponse.client_id });
-            res.json(registrationResponse);
+            res.send = function(body) {
+                const duration = Date.now() - startTime;
+                responseBody = body;
+                logger.info(`📤 [HTTP] ${req.method} ${req.url} - ${statusCode} (${duration}ms)`);
+                if (statusCode >= 400) {
+                    logger.error(`❌ [HTTP] Error response body: ${body}`);
+                }
+                return originalSend.call(this, body);
+            };
+
+            res.json = function(obj) {
+                const duration = Date.now() - startTime;
+                responseBody = JSON.stringify(obj);
+                logger.info(`📤 [HTTP] ${req.method} ${req.url} - ${statusCode} (${duration}ms)`);
+                if (statusCode >= 400) {
+                    logger.error(`❌ [HTTP] Error response JSON: ${JSON.stringify(obj)}`);
+                }
+                return originalJson.call(this, obj);
+            };
+
+            // Handle unhandled errors
+            res.on('finish', () => {
+                if (!res.headersSent) {
+                    const duration = Date.now() - startTime;
+                    logger.info(`📤 [HTTP] ${req.method} ${req.url} - ${res.statusCode || statusCode} (${duration}ms)`);
+                }
+            });
+
+            next();
         });
 
-        // OAuth login endpoint (minimal implementation)
-        app.get("/oauth/login", (req, res) => {
-            logger.info("OAuth login initiated in Mode 2");
-
-            // Generate state parameter for CSRF protection
-            const state = crypto.randomBytes(32).toString("hex");
-            req.session.oauthState = state;
-
-            const authUrl = new URL(oauthConfig.authUrl);
-            authUrl.searchParams.set("client_id", oauthConfig.clientId);
-            authUrl.searchParams.set("redirect_uri", oauthConfig.redirectUri);
-            authUrl.searchParams.set("response_type", "code");
-            authUrl.searchParams.set("scope", oauthConfig.scopes.join(" "));
-            authUrl.searchParams.set("state", state);
-
-            logger.info(`Redirecting to OAuth provider: ${authUrl.toString()}`);
-            res.redirect(authUrl.toString());
-        });
-
-        // OAuth callback endpoint (minimal implementation)
-        app.get("/oauth/callback", async(req, res) => {
-            logger.info("Processing OAuth callback in Mode 2");
-            const { code, state, error } = req.query;
-
-            if (error) {
-                logger.error("OAuth error in callback", { error });
-                return res.status(400).json({ error: `OAuth error: ${error}` });
-            }
-
-            if (!code) {
-                logger.error("No authorization code received in OAuth callback");
-                return res.status(400).json({ error: "No authorization code received" });
-            }
-
-            if (state !== req.session.oauthState) {
-                logger.error("Invalid OAuth state parameter", { expected: req.session.oauthState, received: state });
-                return res.status(400).json({ error: "Invalid state parameter" });
-            }
-
+        // OAuth discovery endpoint with error handling
+        app.get('/.well-known/oauth-authorization-server', (req, res) => {
             try {
-                // Exchange code for token
-                logger.info("Exchanging authorization code for access token in Mode 2");
-                const tokenResponse = await axios.post(oauthConfig.tokenUrl, {
-                    client_id: oauthConfig.clientId,
-                    client_secret: oauthConfig.clientSecret,
-                    code: code,
-                    grant_type: "authorization_code",
-                    redirect_uri: oauthConfig.redirectUri,
-                });
+                logger.info('🔍 OAuth discovery request received');
 
-                const { access_token } = tokenResponse.data;
-                logger.info("Successfully obtained access token in Mode 2");
+                const issuer = process.env.ISSUER || `http://localhost:${PORT}`;
+                const config = {
+                    issuer: issuer,
+                    authorization_endpoint: `${issuer}/oauth/login`,
+                    token_endpoint: `${issuer}/oauth/callback`,
+                    registration_endpoint: `${issuer}/oauth/register`,
+                    response_types_supported: ["code"],
+                    grant_types_supported: ["authorization_code"],
+                    token_endpoint_auth_methods_supported: ["client_secret_post"],
+                    scopes_supported: ["openid", "profile", "email"]
+                };
 
-                // Clear OAuth state from session
-                delete req.session.oauthState;
+                logger.info('✅ OAuth authorization server metadata served for Mode 2');
+                res.json(config);
+            } catch (error) {
+                logger.error('❌ Error serving OAuth discovery endpoint:', error);
+                res.status(500).json({ error: 'Internal server error', message: error.message });
+            }
+        });
 
-                // Return the token to the user (Mode 2 doesn't store it in session)
-                res.json({
-                    success: true,
-                    message: "Authentication successful! Use this Bearer token for MCP requests.",
-                    access_token: access_token,
-                    instructions: `Add this header to MCP requests: Authorization: Bearer ${access_token}`,
-                    mcp_endpoint: `${EFFECTIVE_BASE_URL}/mcp`
-                });
+        // OAuth registration endpoint with error handling
+        app.post('/oauth/register', (req, res) => {
+            try {
+                logger.info('📝 OAuth client registration request received');
+
+                // Simple client registration - return client ID
+                const clientId = crypto.randomUUID();
+                const clientSecret = crypto.randomBytes(32).toString('hex');
+
+                const registrationData = {
+                    client_id: clientId,
+                    client_secret: clientSecret,
+                    client_id_issued_at: Math.floor(Date.now() / 1000),
+                    grant_types: ["authorization_code"],
+                    response_types: ["code"],
+                    token_endpoint_auth_method: "client_secret_post"
+                };
+
+                logger.info(`✅ OAuth client registered: ${clientId}`);
+                res.json(registrationData);
+            } catch (error) {
+                logger.error('❌ Error in OAuth registration:', error);
+                res.status(500).json({ error: 'Registration failed', message: error.message });
+            }
+        });
+
+        // OAuth login endpoint with error handling  
+        app.get('/oauth/login', (req, res) => {
+            try {
+                logger.info('🚪 OAuth login request received');
+
+                const { client_id, redirect_uri, response_type, state, scope } = req.query;
+
+                if (!client_id || !redirect_uri || response_type !== 'code') {
+                    logger.error('❌ Invalid OAuth login parameters');
+                    return res.status(400).json({ error: 'invalid_request', error_description: 'Missing or invalid parameters' });
+                }
+
+                // Store state for validation
+                req.session.oauth_state = state;
+                req.session.oauth_client_id = client_id;
+                req.session.oauth_redirect_uri = redirect_uri;
+
+                // Generate authorization code
+                const authCode = crypto.randomBytes(32).toString('hex');
+                req.session.auth_code = authCode;
+
+                logger.info(`✅ OAuth authorization code generated for client: ${client_id}`);
+
+                // Redirect back with code
+                const redirectUrl = new URL(redirect_uri);
+                redirectUrl.searchParams.set('code', authCode);
+                if (state) redirectUrl.searchParams.set('state', state);
+
+                res.redirect(redirectUrl.toString());
+            } catch (error) {
+                logger.error('❌ Error in OAuth login:', error);
+                res.status(500).json({ error: 'server_error', error_description: error.message });
+            }
+        });
+
+        // OAuth callback/token endpoint with error handling
+        app.post('/oauth/callback', (req, res) => {
+            try {
+                logger.info('🔄 OAuth token exchange request received');
+
+                const { grant_type, code, client_id, client_secret, redirect_uri } = req.body;
+
+                if (grant_type !== 'authorization_code' || !code) {
+                    logger.error('❌ Invalid token exchange parameters');
+                    return res.status(400).json({ error: 'invalid_grant', error_description: 'Invalid grant type or code' });
+                }
+
+                // Validate the authorization code (in real implementation, check against stored codes)
+                if (!req.session.auth_code || req.session.auth_code !== code) {
+                    logger.error('❌ Invalid authorization code');
+                    return res.status(400).json({ error: 'invalid_grant', error_description: 'Invalid authorization code' });
+                }
+
+                // Generate bearer token
+                const accessToken = crypto.randomBytes(32).toString('hex');
+
+                const tokenResponse = {
+                    access_token: accessToken,
+                    token_type: 'Bearer',
+                    expires_in: 3600, // 1 hour
+                    scope: 'openid profile email'
+                };
+
+                logger.info(`✅ OAuth token issued for client: ${client_id}`);
+                res.json(tokenResponse);
+
+                // Clear session data
+                delete req.session.auth_code;
+                delete req.session.oauth_state;
+                delete req.session.oauth_client_id;
+                delete req.session.oauth_redirect_uri;
 
             } catch (error) {
-                logger.error("Error during OAuth callback in Mode 2", { error: error.message });
-                res.status(500).json({ error: "Authentication failed" });
+                logger.error('❌ Error in OAuth token exchange:', error);
+                res.status(500).json({ error: 'server_error', error_description: error.message });
             }
         });
 
