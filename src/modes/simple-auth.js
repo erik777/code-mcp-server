@@ -15,6 +15,12 @@ const crypto = require("crypto");
 const { createBearerAuth } = require("../auth/bearer-only");
 const { parseOAuthConfig, validateOAuthConfig, logOAuthConfig } = require("../auth/oauth-config");
 
+// Authorization code store (session-independent for ChatGPT compatibility)
+const authCodes = new Map(); // Map<authCode, {clientId, redirectUri, state, timestamp}>
+
+// Access token store (self-contained token validation for Mode 2)
+const accessTokens = new Map(); // Map<accessToken, {clientId, issuedAt, expiresAt}>
+
 // Configuration
 const REPO_PATH = process.env.REPO_PATH || "/home/erik/dev/ws/cursor/oc-sc/oc-ui";
 const PORT = process.env.PORT || 3131;
@@ -330,6 +336,7 @@ async function start({ enableAuth = true }) {
         // Create Express app
         const app = express();
         app.use(express.json());
+        app.use(express.urlencoded({ extended: true })); // Parse form data for OAuth token exchange
 
         logger.info("[SIMPLE-AUTH] 📨 === MCP REQUEST LOGGING ===");
 
@@ -354,8 +361,52 @@ async function start({ enableAuth = true }) {
             return originalSend.call(this, body);
         };
 
-        // Create Bearer authentication middleware
-        const bearerAuth = createBearerAuth(oauthConfig);
+        // Create custom Bearer authentication middleware for Mode 2 (self-contained)
+        const bearerAuth = (req, res, next) => {
+            const authHeader = req.get('Authorization');
+
+            if (!authHeader || !authHeader.startsWith('Bearer ')) {
+                logger.warn('[MODE2-AUTH] Missing or invalid Authorization header');
+                return res.status(401).json({
+                    jsonrpc: "2.0",
+                    error: { code: -32002, message: "Authorization required", data: "Bearer token required" },
+                    id: null
+                });
+            }
+
+            const token = authHeader.substring(7); // Remove "Bearer " prefix
+            logger.info(`[MODE2-AUTH] Validating self-generated token: ${token}`);
+
+            // Validate token from our store
+            const tokenData = accessTokens.get(token);
+            if (!tokenData) {
+                logger.error(`[MODE2-AUTH] Token not found in store: ${token}`);
+                logger.info(`[MODE2-AUTH] Available tokens: ${Array.from(accessTokens.keys())}`);
+                return res.status(403).json({
+                    jsonrpc: "2.0",
+                    error: { code: -32002, message: "Invalid token", data: "Token not recognized" },
+                    id: null
+                });
+            }
+
+            // Check if token is expired
+            if (Date.now() > tokenData.expiresAt) {
+                logger.error(`[MODE2-AUTH] Token expired: ${token}`);
+                accessTokens.delete(token); // Clean up expired token
+                return res.status(403).json({
+                    jsonrpc: "2.0",
+                    error: { code: -32002, message: "Token expired", data: "Please re-authenticate" },
+                    id: null
+                });
+            }
+
+            logger.info(`[MODE2-AUTH] ✅ Token validation successful for client: ${tokenData.clientId}`);
+
+            // Add token info to request for potential use
+            req.tokenData = tokenData;
+
+            next();
+        };
 
         // Add minimal session support (only for OAuth state parameter)
         app.use(session({
@@ -437,7 +488,8 @@ async function start({ enableAuth = true }) {
             try {
                 logger.info('🔍 OAuth discovery request received');
 
-                const issuer = process.env.ISSUER || `http://localhost:${PORT}`;
+                // Use EFFECTIVE_BASE_URL to match standard mode logic
+                const issuer = EFFECTIVE_BASE_URL;
                 const config = {
                     issuer: issuer,
                     authorization_endpoint: `${issuer}/oauth/login`,
@@ -448,6 +500,12 @@ async function start({ enableAuth = true }) {
                     token_endpoint_auth_methods_supported: ["client_secret_post"],
                     scopes_supported: ["openid", "profile", "email"]
                 };
+
+                // 🔍 LOG THE EXACT JSON BEING SENT TO CHATGPT (same as standard mode)
+                logger.info("🔍 === MODE 2 OAUTH DISCOVERY RESPONSE ===");
+                logger.info(`📤 Sending OAuth metadata to ${req.ip} (${req.get('user-agent')})`);
+                logger.info(`📄 JSON Response: ${JSON.stringify(config, null, 2)}`);
+                logger.info("🔍 === END MODE 2 OAUTH DISCOVERY RESPONSE ===");
 
                 logger.info('✅ OAuth authorization server metadata served for Mode 2');
                 res.json(config);
@@ -495,16 +553,19 @@ async function start({ enableAuth = true }) {
                     return res.status(400).json({ error: 'invalid_request', error_description: 'Missing or invalid parameters' });
                 }
 
-                // Store state for validation
-                req.session.oauth_state = state;
-                req.session.oauth_client_id = client_id;
-                req.session.oauth_redirect_uri = redirect_uri;
-
                 // Generate authorization code
                 const authCode = crypto.randomBytes(32).toString('hex');
-                req.session.auth_code = authCode;
+
+                // Store authorization code in session-independent store for ChatGPT compatibility
+                authCodes.set(authCode, {
+                    clientId: client_id,
+                    redirectUri: redirect_uri,
+                    state: state,
+                    timestamp: Date.now()
+                });
 
                 logger.info(`✅ OAuth authorization code generated for client: ${client_id}`);
+                logger.info(`🔍 Authorization code stored: ${authCode} (session-independent)`);
 
                 // Redirect back with code
                 const redirectUrl = new URL(redirect_uri);
@@ -522,22 +583,71 @@ async function start({ enableAuth = true }) {
         app.post('/oauth/callback', (req, res) => {
             try {
                 logger.info('🔄 OAuth token exchange request received');
+                logger.info(`📋 Token exchange request body: ${JSON.stringify(req.body)}`);
+                logger.info(`🔍 Request headers: ${JSON.stringify(req.headers)}`);
 
                 const { grant_type, code, client_id, client_secret, redirect_uri } = req.body;
 
+                // Log individual parameters for debugging
+                logger.info(`🔍 Parsed parameters:`);
+                logger.info(`  - grant_type: ${grant_type}`);
+                logger.info(`  - code: ${code}`);
+                logger.info(`  - client_id: ${client_id}`);
+                logger.info(`  - client_secret: ${client_secret ? '[REDACTED]' : 'undefined'}`);
+                logger.info(`  - redirect_uri: ${redirect_uri}`);
+
                 if (grant_type !== 'authorization_code' || !code) {
-                    logger.error('❌ Invalid token exchange parameters');
+                    logger.error('❌ Invalid token exchange parameters: grant_type or code missing');
                     return res.status(400).json({ error: 'invalid_grant', error_description: 'Invalid grant type or code' });
                 }
 
-                // Validate the authorization code (in real implementation, check against stored codes)
-                if (!req.session.auth_code || req.session.auth_code !== code) {
-                    logger.error('❌ Invalid authorization code');
+                // Validate the authorization code from session-independent store
+                const storedCodeData = authCodes.get(code);
+                logger.info(`🔍 Authorization code lookup for: ${code}`);
+                logger.info(`🔍 Available codes in store: ${Array.from(authCodes.keys())}`);
+                logger.info(`🔍 Total codes in store: ${authCodes.size}`);
+
+                if (!storedCodeData) {
+                    logger.error(`❌ Authorization code not found: ${code}`);
+                    logger.error(`❌ This means the code was either:`);
+                    logger.error(`   - Never generated (login flow failed)`);
+                    logger.error(`   - Already used (codes are single-use)`);
+                    logger.error(`   - Expired (>10 minutes old)`);
                     return res.status(400).json({ error: 'invalid_grant', error_description: 'Invalid authorization code' });
+                }
+
+                logger.info(`✅ Authorization code found! Stored data: ${JSON.stringify({
+                    clientId: storedCodeData.clientId,
+                    redirectUri: storedCodeData.redirectUri,
+                    state: storedCodeData.state,
+                    age: Date.now() - storedCodeData.timestamp
+                })}`);
+
+                // Check if code is expired (10 minutes max)
+                const codeAge = Date.now() - storedCodeData.timestamp;
+                if (codeAge > 10 * 60 * 1000) {
+                    logger.error(`❌ Authorization code expired: ${code} (age: ${codeAge}ms)`);
+                    authCodes.delete(code);
+                    return res.status(400).json({ error: 'invalid_grant', error_description: 'Authorization code expired' });
+                }
+
+                // Validate client_id matches
+                if (storedCodeData.clientId !== client_id) {
+                    logger.error(`❌ Client ID mismatch: expected ${storedCodeData.clientId}, got ${client_id}`);
+                    return res.status(400).json({ error: 'invalid_grant', error_description: 'Client ID mismatch' });
                 }
 
                 // Generate bearer token
                 const accessToken = crypto.randomBytes(32).toString('hex');
+                const issuedAt = Date.now();
+                const expiresAt = issuedAt + (3600 * 1000); // 1 hour from now
+
+                // Store access token for self-contained validation
+                accessTokens.set(accessToken, {
+                    clientId: client_id,
+                    issuedAt: issuedAt,
+                    expiresAt: expiresAt
+                });
 
                 const tokenResponse = {
                     access_token: accessToken,
@@ -547,13 +657,14 @@ async function start({ enableAuth = true }) {
                 };
 
                 logger.info(`✅ OAuth token issued for client: ${client_id}`);
-                res.json(tokenResponse);
+                logger.info(`🔍 Access token: ${accessToken}`);
+                logger.info(`🔒 Token stored for self-contained validation (expires: ${new Date(expiresAt).toISOString()})`);
 
-                // Clear session data
-                delete req.session.auth_code;
-                delete req.session.oauth_state;
-                delete req.session.oauth_client_id;
-                delete req.session.oauth_redirect_uri;
+                // Remove used authorization code
+                authCodes.delete(code);
+                logger.info(`🗑️ Authorization code ${code} removed after use`);
+
+                res.json(tokenResponse);
 
             } catch (error) {
                 logger.error('❌ Error in OAuth token exchange:', error);
