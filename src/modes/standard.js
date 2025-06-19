@@ -637,7 +637,57 @@ logger.info( "MCP Server instance created");
 // Register search tool
 server.tool(
   "search",
-  "STEP 1: Find files in any Git repository by searching through their text content.\n\nThis tool searches inside files (not just filenames) and returns matches with file paths as 'id' values. Always use the 'fetch' tool next to get complete file content.\n\n🔄 WORKFLOW: search → fetch\n1. Use 'search' to find files containing your target content\n2. Use 'fetch' with the 'id' from search results to get full file content\n\n📋 COMMON CODEBASE ANALYSIS PATTERNS:\n\n🏗️ PROJECT STRUCTURE & OVERVIEW:\n• search('README') → Find main documentation and project overview\n• search('package.json') or search('requirements.txt') → Find dependencies and project config\n• search('Dockerfile') or search('docker-compose') → Find containerization setup\n• search('.gitignore') → Understand what files are excluded\n\n🔧 TECHNOLOGY STACK DISCOVERY:\n• search('import ') or search('from ') → Find Python imports and dependencies\n• search('require(') or search('import {') → Find JavaScript/Node.js modules\n• search('<dependency>') or search('pom.xml') → Find Java/Maven dependencies\n• search('using ') or search('namespace ') → Find C#/.NET structure\n\n💼 CODE ARCHITECTURE & PATTERNS:\n• search('class ') → Find class definitions and OOP structure\n• search('function ') or search('def ') → Find function definitions\n• search('interface ') or search('type ') → Find TypeScript interfaces and types\n• search('async ') or search('await ') → Find asynchronous code patterns\n• search('TODO') or search('FIXME') → Find code comments and technical debt\n\n🎯 SPECIFIC FUNCTIONALITY:\n• search('API') or search('endpoint') → Find API definitions and routes\n• search('database') or search('DB') → Find database-related code\n• search('auth') or search('login') → Find authentication/authorization\n• search('config') or search('environment') → Find configuration management\n• search('test') or search('spec') → Find test files and testing patterns\n\n🔍 CODE QUALITY & PATTERNS:\n• search('console.log') or search('print(') → Find debugging statements\n• search('try {') or search('except:') → Find error handling patterns\n• search('if __name__') → Find Python entry points\n• search('module.exports') → Find Node.js module exports\n\n⚠️ IMPORTANT: The 'id' field in results is the file path - use it exactly in fetch()!\n\n🎯 BEST PRACTICES FOR CODEBASE ANALYSIS:\n• Start with README, package.json, or similar config files for project overview\n• Use specific technical terms rather than generic words\n• Search for common patterns in the target language (imports, classes, functions)\n• Look for configuration files to understand the tech stack\n• Search for test files to understand expected behavior\n• Use fetch() immediately after finding relevant files to get complete context",
+  `STEP 1: Find files in any Git repository by searching through their text content.
+
+This tool searches inside files (not just filenames) and returns matches with file paths as 'id' values. Always use the 'fetch' tool next to get complete file content.
+
+🔄 WORKFLOW: search → fetch
+1. Use 'search' to find files containing your target content
+2. Use 'fetch' with the 'id' from search results to get full file content
+
+📋 COMMON CODEBASE ANALYSIS PATTERNS:
+
+🏗️ PROJECT STRUCTURE & OVERVIEW:
+• search('README') → Find main documentation and project overview
+• search('package.json') or search('requirements.txt') → Find dependencies and project config
+• search('Dockerfile') or search('docker-compose') → Find containerization setup
+• search('.gitignore') → Understand what files are excluded
+
+🔧 TECHNOLOGY STACK DISCOVERY:
+• search('import ') or search('from ') → Find Python imports and dependencies
+• search('require(') or search('import {') → Find JavaScript/Node.js modules
+• search('<dependency>') or search('pom.xml') → Find Java/Maven dependencies
+• search('using ') or search('namespace ') → Find C#/.NET structure
+
+💼 CODE ARCHITECTURE & PATTERNS:
+• search('class ') → Find class definitions and OOP structure
+• search('function ') or search('def ') → Find function definitions
+• search('interface ') or search('type ') → Find TypeScript interfaces and types
+• search('async ') or search('await ') → Find asynchronous code patterns
+• search('TODO') or search('FIXME') → Find code comments and technical debt
+
+🎯 SPECIFIC FUNCTIONALITY:
+• search('API') or search('endpoint') → Find API definitions and routes
+• search('database') or search('DB') → Find database-related code
+• search('auth') or search('login') → Find authentication/authorization
+• search('config') or search('environment') → Find configuration management
+• search('test') or search('spec') → Find test files and testing patterns
+
+🔍 CODE QUALITY & PATTERNS:
+• search('console.log') or search('print(') → Find debugging statements
+• search('try {') or search('except:') → Find error handling patterns
+• search('if __name__') → Find Python entry points
+• search('module.exports') → Find Node.js module exports
+
+⚠️ IMPORTANT: The 'id' field in results is the file path - use it exactly in fetch()!
+
+🎯 BEST PRACTICES FOR CODEBASE ANALYSIS:
+• Start with README, package.json, or similar config files for project overview
+• Use specific technical terms rather than generic words
+• Search for common patterns in the target language (imports, classes, functions)
+• Look for configuration files to understand the tech stack
+• Search for test files to understand expected behavior
+• Use fetch() immediately after finding relevant files to get complete context`,
   {
     query: z
       .string()

@@ -327,8 +327,32 @@ function start({ enableAuth = false }) {
   // Create Express app
   const app = express();
 
-  // Middleware
-  app.use(express.json({ limit: "10mb" }));
+  // Raw body capture middleware for debugging
+  app.use('/mcp', express.raw({ type: 'application/json', limit: '10mb' }), (req, res, next) => {
+    logger.info(`[RAW-BODY-DEBUG] Content-Length: ${req.headers['content-length']}`);
+    logger.info(`[RAW-BODY-DEBUG] Content-Type: ${req.headers['content-type']}`);
+    logger.info(`[RAW-BODY-DEBUG] Raw body length: ${req.body ? req.body.length : 0}`);
+    logger.info(`[RAW-BODY-DEBUG] Raw body: ${req.body ? req.body.toString().substring(0, 500) : 'NO BODY'}${req.body && req.body.length > 500 ? '...' : ''}`);
+    
+    // Parse JSON manually for debugging
+    try {
+      if (req.body && req.body.length > 0) {
+        const parsed = JSON.parse(req.body.toString());
+        logger.info(`[JSON-PARSE-DEBUG] Parsed successfully: ${JSON.stringify(parsed, null, 2)}`);
+        req.body = parsed; // Set parsed body
+      } else {
+        logger.warn(`[JSON-PARSE-DEBUG] No body to parse`);
+        req.body = {};
+      }
+    } catch (parseError) {
+      logger.error(`[JSON-PARSE-DEBUG] Failed to parse JSON: ${parseError.message}`);
+      req.body = {};
+    }
+    
+    next();
+  });
+
+  // Skip the default JSON middleware for /mcp since we handle it above
 
   // CORS middleware for cross-origin requests
   app.use((req, res, next) => {
@@ -349,7 +373,7 @@ function start({ enableAuth = false }) {
       logger.info("📨 === INCOMING MCP REQUEST ===");
       logger.info(`Method: ${req.method}`);
       logger.info(`Content-Type: ${req.headers["content-type"]}`);
-      logger.info(`Body:`, JSON.stringify(req.body, null, 2));
+      logger.info(`Body: ${JSON.stringify(req.body, null, 2)}`);
 
       const { jsonrpc, id, method, params } = req.body;
       let response;
@@ -382,7 +406,57 @@ function start({ enableAuth = false }) {
             tools: [
               {
                 name: "search",
-                description: "STEP 1: Search for files in the Git repository by filename or content.",
+                description: `STEP 1: Find files in the codebase by searching through their text content.
+
+This tool searches inside files (not just filenames) and returns matches with file paths as 'id' values. Always use the 'fetch' tool next to get complete file content.
+
+🔄 WORKFLOW: search → fetch
+1. Use 'search' to find files containing your target content
+2. Use 'fetch' with the 'id' from search results to get full file content
+
+📋 COMMON CODEBASE ANALYSIS PATTERNS:
+
+🏗️ PROJECT STRUCTURE & OVERVIEW:
+• search('README') → Find main documentation and project overview
+• search('package.json') or search('requirements.txt') → Find dependencies and project config
+• search('Dockerfile') or search('docker-compose') → Find containerization setup
+• search('.gitignore') → Understand what files are excluded
+
+🔧 TECHNOLOGY STACK DISCOVERY:
+• search('import ') or search('from ') → Find Python imports and dependencies
+• search('require(') or search('import {') → Find JavaScript/Node.js modules
+• search('<dependency>') or search('pom.xml') → Find Java/Maven dependencies
+• search('using ') or search('namespace ') → Find C#/.NET structure
+
+💼 CODE ARCHITECTURE & PATTERNS:
+• search('class ') → Find class definitions and OOP structure
+• search('function ') or search('def ') → Find function definitions
+• search('interface ') or search('type ') → Find TypeScript interfaces and types
+• search('async ') or search('await ') → Find asynchronous code patterns
+• search('TODO') or search('FIXME') → Find code comments and technical debt
+
+🎯 SPECIFIC FUNCTIONALITY:
+• search('API') or search('endpoint') → Find API definitions and routes
+• search('database') or search('DB') → Find database-related code
+• search('auth') or search('login') → Find authentication/authorization
+• search('config') or search('environment') → Find configuration management
+• search('test') or search('spec') → Find test files and testing patterns
+
+🔍 CODE QUALITY & PATTERNS:
+• search('console.log') or search('print(') → Find debugging statements
+• search('try {') or search('except:') → Find error handling patterns
+• search('if __name__') → Find Python entry points
+• search('module.exports') → Find Node.js module exports
+
+⚠️ IMPORTANT: The 'id' field in results is the file path - use it exactly in fetch()!
+
+🎯 BEST PRACTICES FOR CODEBASE ANALYSIS:
+• Start with README, package.json, or similar config files for project overview
+• Use specific technical terms rather than generic words
+• Search for common patterns in the target language (imports, classes, functions)
+• Look for configuration files to understand the tech stack
+• Search for test files to understand expected behavior
+• Use fetch() immediately after finding relevant files to get complete context`,
                 inputSchema: {
                   type: "object",
                   properties: {
@@ -433,7 +507,7 @@ function start({ enableAuth = false }) {
                   properties: {
                     id: {
                       type: "string",
-                      description: "File path relative to the repository root (e.g., 'README.md', 'src/index.js', 'package.json'). This should be the exact 'id' value returned from search results.",
+                      description: "File path relative to the codebase root (e.g., 'README.md', 'src/index.js', 'package.json'). This should be the exact 'id' value returned from search results.",
                     },
                   },
                   required: ["id"],
@@ -537,7 +611,7 @@ function start({ enableAuth = false }) {
       }
 
       logger.info("📤 === OUTGOING MCP RESPONSE ===");
-      logger.info(`Response:`, JSON.stringify(response, null, 2));
+      logger.info(`Response: ${JSON.stringify(response, null, 2)}`);
 
       res.json(response);
     } catch (error) {

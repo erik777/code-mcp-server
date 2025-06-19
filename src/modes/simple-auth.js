@@ -204,6 +204,8 @@ async function handleFileSearch(args) {
 async function handleMCPRequest(req, res) {
     const { id, method, params } = req.body;
 
+    // Log incoming MCP request details
+    logger.info('📥 MCP Request:', JSON.stringify(req.body, null, 2));
     logger.debug(`🚀 === ${method.toUpperCase()} METHOD ===`);
 
     try {
@@ -225,7 +227,57 @@ async function handleMCPRequest(req, res) {
                 result = {
                     tools: [{
                             name: "search",
-                            description: "STEP 1: Search for files in the Git repository by filename or content.",
+                            description: `STEP 1: Find files in any Git repository by searching through their text content.
+
+This tool searches inside files (not just filenames) and returns matches with file paths as 'id' values. Always use the 'fetch' tool next to get complete file content.
+
+🔄 WORKFLOW: search → fetch
+1. Use 'search' to find files containing your target content
+2. Use 'fetch' with the 'id' from search results to get full file content
+
+📋 COMMON CODEBASE ANALYSIS PATTERNS:
+
+🏗️ PROJECT STRUCTURE & OVERVIEW:
+• search('README') → Find main documentation and project overview
+• search('package.json') or search('requirements.txt') → Find dependencies and project config
+• search('Dockerfile') or search('docker-compose') → Find containerization setup
+• search('.gitignore') → Understand what files are excluded
+
+🔧 TECHNOLOGY STACK DISCOVERY:
+• search('import ') or search('from ') → Find Python imports and dependencies
+• search('require(') or search('import {') → Find JavaScript/Node.js modules
+• search('<dependency>') or search('pom.xml') → Find Java/Maven dependencies
+• search('using ') or search('namespace ') → Find C#/.NET structure
+
+💼 CODE ARCHITECTURE & PATTERNS:
+• search('class ') → Find class definitions and OOP structure
+• search('function ') or search('def ') → Find function definitions
+• search('interface ') or search('type ') → Find TypeScript interfaces and types
+• search('async ') or search('await ') → Find asynchronous code patterns
+• search('TODO') or search('FIXME') → Find code comments and technical debt
+
+🎯 SPECIFIC FUNCTIONALITY:
+• search('API') or search('endpoint') → Find API definitions and routes
+• search('database') or search('DB') → Find database-related code
+• search('auth') or search('login') → Find authentication/authorization
+• search('config') or search('environment') → Find configuration management
+• search('test') or search('spec') → Find test files and testing patterns
+
+🔍 CODE QUALITY & PATTERNS:
+• search('console.log') or search('print(') → Find debugging statements
+• search('try {') or search('except:') → Find error handling patterns
+• search('if __name__') → Find Python entry points
+• search('module.exports') → Find Node.js module exports
+
+⚠️ IMPORTANT: The 'id' field in results is the file path - use it exactly in fetch()!
+
+🎯 BEST PRACTICES FOR CODEBASE ANALYSIS:
+• Start with README, package.json, or similar config files for project overview
+• Use specific technical terms rather than generic words
+• Search for common patterns in the target language (imports, classes, functions)
+• Look for configuration files to understand the tech stack
+• Search for test files to understand expected behavior
+• Use fetch() immediately after finding relevant files to get complete context`,
                             inputSchema: {
                                 type: "object",
                                 properties: {
@@ -299,8 +351,7 @@ async function handleMCPRequest(req, res) {
         }
 
         const response = { jsonrpc: "2.0", id, result };
-        logger.info(`📤 === OUTGOING MCP RESPONSE ===`);
-        logger.debug(`Response: ${JSON.stringify(response)}`);
+        logger.info(`📤 MCP Response:`, JSON.stringify(response, null, 2));
         res.json(response);
 
     } catch (error) {
@@ -310,6 +361,7 @@ async function handleMCPRequest(req, res) {
             id,
             error: { code: -32603, message: error.message }
         };
+        logger.error('📤 MCP Error Response:', JSON.stringify(errorResponse, null, 2));
         res.status(500).json(errorResponse);
     }
 }
@@ -338,31 +390,25 @@ async function start({ enableAuth = true }) {
         app.use(express.json());
         app.use(express.urlencoded({ extended: true })); // Parse form data for OAuth token exchange
 
-        logger.info("[SIMPLE-AUTH] 📨 === MCP REQUEST LOGGING ===");
-
-        // Request logging middleware
+        // Debug middleware to check body parsing
         app.use((req, res, next) => {
             if (req.path === "/mcp") {
-                logger.info("📨 === INCOMING MCP REQUEST ===");
-                logger.info(`Method: ${req.method}`);
-                logger.info(`Content-Type: ${req.get("content-type")}`);
-                logger.info(`Body: ${JSON.stringify(req.body)}`);
+                logger.info(`[BODY-DEBUG] After body parser - Body: ${JSON.stringify(req.body)}`);
+                logger.info(`[BODY-DEBUG] Content-Type: ${req.get('content-type')}`);
+                logger.info(`[BODY-DEBUG] Content-Length: ${req.get('content-length')}`);
             }
             next();
         });
 
-        // Response logging middleware
-        const originalSend = app.response.send;
-        app.response.send = function(body) {
-            if (this.req.path === "/mcp") {
-                logger.info("📤 === OUTGOING MCP RESPONSE ===");
-                logger.info(`Response: ${body}`);
-            }
-            return originalSend.call(this, body);
-        };
+        logger.info("[SIMPLE-AUTH] 📨 === MCP REQUEST LOGGING ===");
+
+        // Note: MCP request/response logging moved to route handler for better body access
 
         // Create custom Bearer authentication middleware for Mode 2 (self-contained)
         const bearerAuth = (req, res, next) => {
+            // Debug body state in auth middleware
+            logger.info(`[MODE2-AUTH] Body state in auth middleware: ${JSON.stringify(req.body)}`);
+
             const authHeader = req.get('Authorization');
 
             if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -700,10 +746,29 @@ async function start({ enableAuth = true }) {
 
         // MCP endpoint with Bearer authentication
         app.post("/mcp", bearerAuth, async(req, res) => {
-            logger.info("📨 MCP POST request received");
+            // Detailed MCP request logging with debugging
+            logger.info("📨 === DETAILED MCP REQUEST ===");
+            logger.info(`Method: ${req.method}`);
+            logger.info(`Content-Type: ${req.get("content-type")}`);
+            logger.info(`Content-Length: ${req.get("content-length")}`);
+            logger.info(`Authorization: ${req.get("authorization") ? '[PRESENT]' : '[MISSING]'}`);
+            logger.info(`User-Agent: ${req.get("user-agent")}`);
+
+            // Debug body parsing
+            logger.info(`📥 Raw req.body type: ${typeof req.body}`);
+            logger.info(`📥 Raw req.body keys: ${Object.keys(req.body || {})}`);
+            logger.info(`📥 MCP Request Body:`, JSON.stringify(req.body, null, 2));
+
+            // Additional debugging
+            if (!req.body || Object.keys(req.body).length === 0) {
+                logger.error("❌ Request body is empty! This indicates a body parsing issue.");
+                logger.info("🔍 Raw request details:");
+                logger.info(`  - readable: ${req.readable}`);
+                logger.info(`  - complete: ${req.complete}`);
+            }
 
             // Handle notifications differently (they don't expect responses)
-            if (req.body.method && req.body.method.startsWith("notifications/")) {
+            if (req.body && req.body.method && req.body.method.startsWith("notifications/")) {
                 await handleMCPNotification(req, res);
             } else {
                 await handleMCPRequest(req, res);
